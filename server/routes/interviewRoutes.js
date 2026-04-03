@@ -15,6 +15,7 @@ r.post(
 );
 r.post("/answer", interview.submitAnswer);
 r.post("/end", interview.endInterview);
+r.post("/rate", interview.rateInterview);
 r.get("/sessions", interview.listSessions);
 r.get("/sessions/:id", interview.getSession);
 

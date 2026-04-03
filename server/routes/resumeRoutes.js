@@ -15,5 +15,6 @@ r.post(
 );
 r.get("/", resume.listResumes);
 r.get("/latest", resume.getLatestResumeText);
+r.post("/feedback", resume.updateResumeFeedback);
 
 export default r;

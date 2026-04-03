@@ -88,6 +88,40 @@ function extractJson(text) {
   return null;
 }
 
+function normalizeList(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((v) => String(v || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function isVagueItem(item) {
+  const s = String(item || "").trim();
+  if (!s) return true;
+  if (s.length < 12) return true;
+
+  const lc = s.toLowerCase();
+  if (/^\*?\s*tip\s*:?\s*$/i.test(s)) return true;
+  if (/^\*?\s*general\s*:?\s*$/i.test(s)) return true;
+  if (/(^|\b)(if applicable|etc\.?|and more|generic|various)($|\b)/i.test(lc)) return true;
+
+  return false;
+}
+
+function uniqueAndConcrete(list, maxItems) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of normalizeList(list)) {
+    if (isVagueItem(raw)) continue;
+    const key = raw.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(raw);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
 /**
  * Extract readable text from an uploaded image document (JPEG/PNG/WebP/GIF).
  * @param {Buffer} buffer
@@ -122,6 +156,7 @@ export async function extractTextFromJobDescriptionImage(buffer, mimeType) {
  */
 export async function analyzeResume(resumeText, jobContextText = "") {
   const hasJd = Boolean(jobContextText && jobContextText.trim().length > 0);
+  const resumeSnippet = resumeText.slice(0, 48000);
   const jdBlock = hasJd
     ? `
 Target job / role context (use this to align ATS score, keywords, gaps, and suggestions with the role; if partial, infer reasonably):
@@ -137,7 +172,7 @@ ${jobContextText.trim().slice(0, 42000)}
 ${
   hasJd
     ? "The candidate supplied a target job description or structured role details above. Weight the ATS score toward fit for THIS role (skills, title, responsibilities, employment type). Tailor weaknesses, bullet improvements, missing skills, and suggestions to close gaps versus this target. Reference specific JD requirements when relevant."
-    : "No target job description was provided. Score using general ATS and professional resume best practices."
+    : "No target job description was provided. Infer the most likely role direction from the resume itself and provide resume-grounded, specific guidance only. Do NOT use placeholders like 'if applicable', 'etc', or generic advice disconnected from the candidate's actual content."
 }
 
 Analyze the resume text below and respond with ONLY valid JSON (no markdown), shape:
@@ -149,24 +184,38 @@ Analyze the resume text below and respond with ONLY valid JSON (no markdown), sh
   "suggestions": string array of 4-8 actionable improvement suggestions
 }
 
+Quality constraints:
+- Every item must be concrete and tied to observable resume evidence (projects, experience, tools, metrics, wording, section structure).
+- Avoid vague filler and avoid one-word items.
+- For bulletImprovements, provide rewritten bullet lines or explicit upgrade templates anchored to resume content.
+- For missingSkills without JD, include only foundational role-relevant skills strongly implied by the resume's domain; do not add speculative advanced stacks.
+
 ${jdBlock}
 
 Resume to analyze:
 ---
-${resumeText.slice(0, 48000)}
+${resumeSnippet}
 ---`;
 
   const raw = await generateContent(prompt, { temperature: 0.4 });
   const parsed = extractJson(raw);
   if (parsed && typeof parsed.atsScore === "number") {
+    const cleanedWeaknesses = uniqueAndConcrete(parsed.weaknesses, 6);
+    const cleanedBulletImprovements = uniqueAndConcrete(parsed.bulletImprovements, 8);
+    const cleanedMissingSkills = uniqueAndConcrete(parsed.missingSkills, 8);
+    const cleanedSuggestions = uniqueAndConcrete(parsed.suggestions, 8);
+
+    const fallbackSuggestion =
+      "Quantify top project and leadership bullets with measurable impact (%, count, time saved, revenue, users) using action + impact phrasing.";
+    const fallbackWeakness =
+      "Several bullets are responsibility-heavy and under-quantified; convert them into impact statements with metrics and outcomes.";
+
     return {
       atsScore: Math.min(100, Math.max(0, Math.round(parsed.atsScore))),
-      weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [],
-      bulletImprovements: Array.isArray(parsed.bulletImprovements)
-        ? parsed.bulletImprovements
-        : [],
-      missingSkills: Array.isArray(parsed.missingSkills) ? parsed.missingSkills : [],
-      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+      weaknesses: cleanedWeaknesses.length ? cleanedWeaknesses : [fallbackWeakness],
+      bulletImprovements: cleanedBulletImprovements,
+      missingSkills: cleanedMissingSkills,
+      suggestions: cleanedSuggestions.length ? cleanedSuggestions : [fallbackSuggestion],
     };
   }
   throw new Error("Could not parse resume analysis from AI");
@@ -178,6 +227,7 @@ ${resumeText.slice(0, 48000)}
  * @param {string} resumeText
  * @param {string} stage - technical | behavioral | hr
  * @param {Array<{question:string,answer:string,feedback:string}>} priorTranscript
+ * @param {{ questionNumber?: number, technicalFocus?: string, isSoftwareRole?: boolean, isAnalystRole?: boolean }} [questionMeta]
  */
 export async function generateInterviewQuestions(
   company,
@@ -186,7 +236,8 @@ export async function generateInterviewQuestions(
   stage = "technical",
   priorTranscript = [],
   jobContextText = "",
-  resumeContextText = ""
+  resumeContextText = "",
+  questionMeta = {}
 ) {
   const history =
     priorTranscript.length === 0
@@ -200,11 +251,45 @@ export async function generateInterviewQuestions(
 
   const stageGuide = {
     technical:
-      "Ask ONE challenging but fair technical question for this role. Reference resume if relevant.",
+      "Ask ONE high-probability technical question most likely in a real interview for this company and role. Reference resume/projects where relevant.",
     behavioral:
-      "Ask ONE behavioral interview question (STAR style). Tailor to company values if known.",
-    hr: "Ask ONE HR / culture / motivation question appropriate for final stage.",
+      "Ask ONE high-probability behavioral interview question (STAR style) commonly asked for this company-role context.",
+    hr: "Ask ONE high-probability HR / culture / motivation question appropriate for final stage and commonly asked in real interviews.",
   };
+
+  const questionNumber = Number(questionMeta?.questionNumber || priorTranscript.length + 1);
+  const technicalFocus = questionMeta?.technicalFocus || "";
+  const softwareRole = Boolean(questionMeta?.isSoftwareRole);
+  const analystRole = Boolean(questionMeta?.isAnalystRole);
+  const cyclePosition = (questionNumber - 1) % 10;
+  const cycleHint =
+    cyclePosition < 7
+      ? `Question ${questionNumber}: technical slot in 70/30 plan (7 technical first).`
+      : `Question ${questionNumber}: behavioral/HR slot in 70/30 plan (remaining 3 slots).`;
+
+  const softwareTechnicalHint =
+    stage === "technical" && softwareRole
+      ? `
+Software-role technical constraints:
+- Ask exactly one focused technical question for this slot focus: ${technicalFocus || "dsa"}.
+- Across technical slots in each 10-question cycle, coverage must include DSA, OOP, OS, DBMS, and at least one resume project/experience question.
+- DSA should be the most frequent technical type.
+- Anchor the question in company + role expectations and candidate resume/JD context.
+`
+      : "";
+
+  const analystTechnicalHint =
+    stage === "technical" && analystRole
+      ? `
+Analyst-role technical constraints:
+- Ask exactly one focused analyst technical question for this slot focus: ${technicalFocus || "sql"}.
+- Across technical slots in each 10-question cycle, include SQL, basic Excel, analyst case/problem-solving, and at least one resume project/experience question.
+- SQL should be asked most frequently for analyst roles.
+- Prefer high-probability patterns commonly asked for this company-role and similar analyst interviews when exact history is unavailable.
+- Keep questions practical and job-relevant (query logic, joins/aggregations, Excel formulas/pivots/lookups, metrics interpretation).
+- Ground at least one technical slot in the candidate's resume achievements, tools, or projects.
+`
+      : "";
 
   const hasJd = Boolean(jobContextText && jobContextText.trim().length > 0);
   const hasResumeContext = Boolean(
@@ -232,7 +317,14 @@ Previous exchange:
 ${history}
 
 Stage: ${stage}. ${stageGuide[stage] || stageGuide.technical}
-If both JD requirements and resume strengths/gaps are available, frame questions that test match quality.
+${cycleHint}
+Question quality constraints:
+- Prioritize questions with highest probability of being asked in real interviews for this company + role.
+- Prefer patterns of previously asked interview questions for this company-role pair; if exact history is unavailable, use the closest known company/industry interview patterns.
+- Avoid random/trivia-style questions; favor practical, repeatable interview themes.
+- If both JD requirements and resume strengths/gaps are available, frame questions that test match quality.
+${softwareTechnicalHint}
+${analystTechnicalHint}
 STRICT FORMAT RULES:
 - Ask exactly ONE question only (not a list, not multi-part).
 - Keep it short: max 1 sentence, ideally 12-24 words.
@@ -248,7 +340,7 @@ Respond with ONLY valid JSON:
   "stage": "${stage}"
 }`;
 
-  const raw = await generateContent(prompt, { temperature: 0.75 });
+  const raw = await generateContent(prompt, { temperature: 0.45 });
   const parsed = extractJson(raw);
   if (parsed?.question) {
     return {

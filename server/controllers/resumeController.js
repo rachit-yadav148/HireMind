@@ -149,3 +149,21 @@ export async function getLatestResumeText(req, res) {
     res.status(500).json({ message: err.message });
   }
 }
+
+export async function updateResumeFeedback(req, res) {
+  try {
+    const { resumeId, feedbackUseful } = req.body;
+    if (!resumeId || !feedbackUseful || !["yes", "no"].includes(feedbackUseful)) {
+      return res.status(400).json({ message: "resumeId and feedbackUseful (yes/no) are required" });
+    }
+    const resume = await Resume.findOne({ _id: resumeId, userId: req.userId });
+    if (!resume) {
+      return res.status(404).json({ message: "Resume not found" });
+    }
+    resume.feedbackUseful = feedbackUseful;
+    await resume.save();
+    res.json({ success: true, feedbackUseful });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+}

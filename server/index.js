@@ -10,6 +10,7 @@ import interviewRoutes from "./routes/interviewRoutes.js";
 import questionRoutes from "./routes/questionRoutes.js";
 import applicationRoutes from "./routes/applicationRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
+import feedbackRoutes from "./routes/feedbackRoutes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -29,6 +30,7 @@ app.use("/api/interviews", interviewRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/analytics", analyticsRoutes);
+app.use("/api/feedback", feedbackRoutes);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, name: "HireMind API" }));
 

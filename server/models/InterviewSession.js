@@ -17,6 +17,8 @@ const interviewSessionSchema = new mongoose.Schema(
     ],
     feedback: { type: mongoose.Schema.Types.Mixed, default: null },
     score: { type: mongoose.Schema.Types.Mixed, default: null },
+    userRating: { type: Number, min: 1, max: 5, default: null },
+    userRatingAt: { type: Date, default: null },
     status: {
       type: String,
       enum: ["in_progress", "completed"],

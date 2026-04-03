@@ -9,6 +9,7 @@ const resumeSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    feedbackUseful: { type: String, enum: ["yes", "no", null], default: null },
   },
   { timestamps: true }
 );
