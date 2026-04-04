@@ -2,6 +2,26 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 
+const TIMER_OPTIONS = [
+  { label: "15 min", value: 15 },
+  { label: "30 min", value: 30 },
+  { label: "45 min", value: 45 },
+  { label: "1 hour", value: 60 },
+  { label: "1.5 hour", value: 90 },
+  { label: "2 hours", value: 120 },
+];
+
+function formatDuration(totalSeconds) {
+  const safe = Math.max(0, Number(totalSeconds) || 0);
+  const hrs = Math.floor(safe / 3600);
+  const mins = Math.floor((safe % 3600) / 60);
+  const secs = safe % 60;
+  if (hrs > 0) {
+    return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
 function speak(text, onEnd) {
   if (!text || !window.speechSynthesis) {
     onEnd?.();
@@ -28,6 +48,14 @@ export default function InterviewSimulator() {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState("");
   const [report, setReport] = useState(null);
+  const [durationMinutes, setDurationMinutes] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [timerActive, setTimerActive] = useState(false);
+  const [timerEnding, setTimerEnding] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [ratingLoading, setRatingLoading] = useState(false);
+  const [ratingMessage, setRatingMessage] = useState("");
 
   const { supported, listening, transcript, error: speechErr, start, stop, reset } =
     useSpeechRecognition();
@@ -44,9 +72,28 @@ export default function InterviewSimulator() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!sessionId || report || !timerActive || timeLeft <= 0) return;
+    const id = setInterval(() => {
+      setTimeLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [sessionId, report, timerActive, timeLeft]);
+
+  useEffect(() => {
+    if (!sessionId || report || !timerActive) return;
+    if (timeLeft > 0 || timerEnding || loading) return;
+    setTimerEnding(true);
+    endInterviewEarly(true);
+  }, [timeLeft, sessionId, report, timerActive, timerEnding, loading]);
+
   async function handleStart(e) {
     e.preventDefault();
     setApiError("");
+    if (!resumeFile) {
+      setApiError("Resume is required to start interview.");
+      return;
+    }
     setLoading(true);
     setReport(null);
     setMessages([]);
@@ -63,6 +110,12 @@ export default function InterviewSimulator() {
       setSessionId(data.sessionId);
       setCurrentQuestion(data.question);
       setStage(data.stage || "technical");
+      setTimeLeft(durationMinutes * 60);
+      setTimerActive(true);
+      setTimerEnding(false);
+      setRating(0);
+      setRatingSubmitted(false);
+      setRatingMessage("");
       appendMsg("interviewer", data.question);
       speak(data.question);
       reset();
@@ -96,6 +149,7 @@ export default function InterviewSimulator() {
 
       if (data.completed && data.report) {
         setReport(data.report);
+        setTimerActive(false);
         setCurrentQuestion("");
         speak("Interview complete. Here is your report summary.");
         return;
@@ -116,22 +170,48 @@ export default function InterviewSimulator() {
     }
   }
 
-  async function endInterviewEarly() {
+  async function endInterviewEarly(triggeredByTimer = false) {
+    const isTimerTriggered = triggeredByTimer === true;
     if (!sessionId) return;
-    setApiError("");
+    if (isTimerTriggered) {
+      setApiError("Time is up. Ending interview and preparing your report...");
+    } else {
+      setApiError("Ending Interview and preparing your report...");
+    }
     setLoading(true);
     stop();
     try {
       const { data } = await api.post("/interviews/end", { sessionId });
       if (data?.report) {
         setReport(data.report);
+        setTimerActive(false);
         setCurrentQuestion("");
-        speak("Interview ended. Here is your summary and score.");
+        speak(
+          isTimerTriggered
+            ? "Time is up. Interview ended. Here is your summary and score."
+            : "Interview ended. Here is your summary and score."
+        );
       }
     } catch (err) {
       setApiError(err.response?.data?.message || "Failed to end interview");
     } finally {
+      setTimerEnding(false);
       setLoading(false);
+    }
+  }
+
+  async function submitInterviewRating() {
+    if (!sessionId || rating < 1 || rating > 5 || ratingSubmitted) return;
+    setRatingLoading(true);
+    setRatingMessage("");
+    try {
+      await api.post("/interviews/rate", { sessionId, rating });
+      setRatingSubmitted(true);
+      setRatingMessage("Thanks! Your feedback was submitted.");
+    } catch (err) {
+      setRatingMessage(err.response?.data?.message || "Failed to submit rating");
+    } finally {
+      setRatingLoading(false);
     }
   }
 
@@ -195,16 +275,32 @@ export default function InterviewSimulator() {
             )}
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Resume (optional)</label>
+            <label className="block text-xs text-slate-400 mb-1">Resume (required)</label>
             <input
               type="file"
               accept="application/pdf,image/jpeg,image/png,image/webp,image/gif"
+              required
               onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
               className="w-full text-sm text-slate-400"
             />
             {resumeFile && (
               <p className="text-xs text-slate-500 mt-2">Selected: {resumeFile.name}</p>
             )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Interview duration</label>
+            <select
+              value={durationMinutes}
+              onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+            >
+              {TIMER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <button
@@ -223,6 +319,9 @@ export default function InterviewSimulator() {
             <div className="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
               <span className="text-xs uppercase tracking-wide text-slate-500">
                 Stage: <span className="text-brand-400">{stage}</span>
+              </span>
+              <span className="text-xs uppercase tracking-wide text-slate-500">
+                Time left: <span className="text-amber-400">{formatDuration(timeLeft)}</span>
               </span>
               {currentQuestion && (
                 <button
@@ -310,7 +409,7 @@ export default function InterviewSimulator() {
               </button>
               <button
                 type="button"
-                onClick={endInterviewEarly}
+                onClick={() => endInterviewEarly(false)}
                 disabled={loading || !sessionId}
                 className="font-medium bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
               >
@@ -360,13 +459,50 @@ export default function InterviewSimulator() {
               </li>
             ))}
           </ul>
+
+          <div className="mt-6 rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+            <p className="text-sm text-slate-300 mb-2">Rate this AI interview experience</p>
+            <div className="flex items-center gap-2">
+              {[1, 2, 3, 4, 5].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => !ratingSubmitted && setRating(v)}
+                  className={`text-2xl ${v <= rating ? "text-amber-400" : "text-slate-600"} ${
+                    ratingSubmitted ? "cursor-default" : "hover:text-amber-300"
+                  }`}
+                  aria-label={`Rate ${v} star${v > 1 ? "s" : ""}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={submitInterviewRating}
+                disabled={ratingLoading || ratingSubmitted || rating < 1}
+                className="font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+              >
+                {ratingLoading ? "Submitting…" : ratingSubmitted ? "Submitted" : "Submit rating"}
+              </button>
+              {ratingMessage && <p className="text-xs text-slate-400">{ratingMessage}</p>}
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={() => {
+              setTimerActive(false);
+              setTimeLeft(0);
+              setApiError("");
               setSessionId(null);
               setReport(null);
               setMessages([]);
               setCurrentQuestion("");
+              setRating(0);
+              setRatingSubmitted(false);
+              setRatingMessage("");
             }}
             className="mt-8 font-semibold bg-brand-500 hover:bg-brand-400 text-white px-5 py-2.5 rounded-xl"
           >

@@ -15,6 +15,7 @@ export default function QuestionGenerator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [bank, setBank] = useState(null);
+  const [activeTab, setActiveTab] = useState("technical");
 
   async function handleGenerate(e) {
     e.preventDefault();
@@ -126,16 +127,37 @@ export default function QuestionGenerator() {
       )}
 
       {bank && (
-        <div className="space-y-10">
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
+            <div className="flex flex-wrap gap-2">
+              <FilterButton
+                active={activeTab === "technical"}
+                onClick={() => setActiveTab("technical")}
+                label={`Technical (${bank.technical?.length || 0})`}
+              />
+              <FilterButton
+                active={activeTab === "behavioral"}
+                onClick={() => setActiveTab("behavioral")}
+                label={`Behavioral (${bank.behavioral?.length || 0})`}
+              />
+              <FilterButton
+                active={activeTab === "hr"}
+                onClick={() => setActiveTab("hr")}
+                label={`HR (${bank.hr?.length || 0})`}
+              />
+            </div>
+          </div>
+
           <Section
             title="Technical"
-            subtitle="Question, short answer, difficulty"
+            subtitle="Question + short answer + difficulty"
             items={bank.technical}
+            visible={activeTab === "technical"}
             render={(q) => (
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="text-white font-medium">{q.question}</p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="text-white font-medium leading-snug">{q.question}</p>
                 <span
-                  className={`text-xs px-2 py-0.5 rounded border shrink-0 ${
+                  className={`text-xs px-2 py-0.5 rounded border shrink-0 capitalize ${
                     difficultyColors[q.difficulty] || "bg-slate-700/50 text-slate-300"
                   }`}
                 >
@@ -144,35 +166,24 @@ export default function QuestionGenerator() {
               </div>
             )}
             extra={(q) => (
-              <p className="text-sm text-slate-400 mt-2">
-                <span className="text-slate-500">Answer: </span>
-                {q.shortAnswer}
-              </p>
+              <BulletLines title="Answer points" value={q.shortAnswer} />
             )}
           />
           <Section
             title="Behavioral"
-            subtitle="Question and answer framework"
+            subtitle="Question + answer framework"
             items={bank.behavioral}
+            visible={activeTab === "behavioral"}
             render={(q) => <p className="text-white font-medium">{q.question}</p>}
-            extra={(q) => (
-              <p className="text-sm text-slate-400 mt-2">
-                <span className="text-slate-500">Framework: </span>
-                {q.answerFramework}
-              </p>
-            )}
+            extra={(q) => <BulletLines title="Framework points" value={q.answerFramework} />}
           />
           <Section
             title="HR"
             subtitle="Question and suggested answer"
             items={bank.hr}
+            visible={activeTab === "hr"}
             render={(q) => <p className="text-white font-medium">{q.question}</p>}
-            extra={(q) => (
-              <p className="text-sm text-slate-400 mt-2">
-                <span className="text-slate-500">Suggested: </span>
-                {q.suggestedAnswer}
-              </p>
-            )}
+            extra={(q) => <BulletLines title="Suggested points" value={q.suggestedAnswer} />}
           />
         </div>
       )}
@@ -180,22 +191,73 @@ export default function QuestionGenerator() {
   );
 }
 
-function Section({ title, subtitle, items, render, extra }) {
+function FilterButton({ active, onClick, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+        active
+          ? "border-brand-400/50 bg-brand-500/20 text-brand-100"
+          : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-500"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function Section({ title, subtitle, items, render, extra, visible }) {
+  if (!visible) return null;
+
   return (
     <div>
       <h2 className="font-display text-xl font-semibold text-white">{title}</h2>
       <p className="text-sm text-slate-500 mb-4">{subtitle}</p>
       <div className="grid gap-4">
         {(items || []).map((q, i) => (
-          <div
+          <details
             key={i}
-            className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 hover:border-slate-700 transition-colors"
+            className="group rounded-xl border border-slate-800 bg-slate-900/50 hover:border-slate-700 transition-colors open:border-brand-500/40"
           >
-            {render(q)}
-            {extra && extra(q)}
-          </div>
+            <summary className="cursor-pointer list-none p-5">
+              <div className="flex items-start gap-2">
+                <span className="text-brand-400 mt-0.5">•</span>
+                <div className="flex-1">{render(q)}</div>
+                <span className="text-xs text-slate-500 group-open:rotate-180 transition-transform">⌄</span>
+              </div>
+            </summary>
+            {extra && <div className="px-9 pb-5 pt-0">{extra(q)}</div>}
+          </details>
         ))}
       </div>
     </div>
   );
+}
+
+function BulletLines({ title, value }) {
+  const points = toBulletPoints(value);
+  return (
+    <div className="mt-1">
+      <p className="text-xs text-slate-500 uppercase tracking-wide">{title}</p>
+      <ul className="mt-2 space-y-1 text-sm text-slate-300">
+        {points.map((point, idx) => (
+          <li key={idx} className="flex gap-2">
+            <span className="text-brand-400">•</span>
+            <span>{point}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function toBulletPoints(text) {
+  if (!text || typeof text !== "string") return ["No answer generated."];
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const splitByMarkers = normalized
+    .split(/(?<=\.)\s+|;\s+|,\s+(?=[A-Z])/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return splitByMarkers.length > 0 ? splitByMarkers.slice(0, 5) : [normalized];
 }

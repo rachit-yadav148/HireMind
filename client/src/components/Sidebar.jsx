@@ -5,6 +5,7 @@ import {
   Mic,
   ListChecks,
   Briefcase,
+  MessageSquare,
   LogOut,
 } from "./Icons";
 
@@ -14,6 +15,7 @@ const links = [
   { to: "/dashboard/interview", label: "Interview Simulator", icon: Mic },
   { to: "/dashboard/questions", label: "Question Generator", icon: ListChecks },
   { to: "/dashboard/applications", label: "Application Tracker", icon: Briefcase },
+  { to: "/dashboard/feedback", label: "Feedback", icon: MessageSquare },
 ];
 
 export default function Sidebar({ onLogout, userName }) {
