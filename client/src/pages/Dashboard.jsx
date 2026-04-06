@@ -46,9 +46,9 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <div>
-      <div className="mb-10">
-        <h1 className="font-display text-3xl font-bold text-white">Dashboard</h1>
+    <div className="min-w-0">
+      <div className="mb-6 sm:mb-10">
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-white">Dashboard</h1>
         <p className="text-slate-400 mt-1">Your AI career prep hub</p>
       </div>
 
@@ -57,7 +57,7 @@ export default function Dashboard() {
       )}
 
       {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 sm:mb-10">
           {[
             { label: "Resumes analyzed", value: stats.resumesAnalyzed },
             { label: "Interviews completed", value: stats.interviewsCompleted },
@@ -65,7 +65,7 @@ export default function Dashboard() {
           ].map((s) => (
             <div
               key={s.label}
-              className="rounded-xl border border-slate-800 bg-slate-900/50 px-5 py-4"
+              className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 sm:px-5 py-4"
             >
               <p className="text-2xl font-bold text-white tabular-nums">{s.value}</p>
               <p className="text-xs text-slate-500 uppercase tracking-wide mt-1">{s.label}</p>
@@ -74,18 +74,18 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-5">
+      <div className="grid md:grid-cols-2 gap-4 sm:gap-5">
         {cards.map((c) => (
           <Link
             key={c.to}
             to={c.to}
-            className={`group rounded-2xl border border-slate-800 bg-gradient-to-br ${c.color} p-6 hover:border-brand-500/40 transition-all shadow-card`}
+            className={`group rounded-2xl border border-slate-800 bg-gradient-to-br ${c.color} p-5 sm:p-6 hover:border-brand-500/40 transition-all shadow-card min-w-0`}
           >
             <div className="flex items-start gap-4">
               <div className="rounded-xl bg-slate-950/50 p-3 text-brand-400 border border-slate-700/80">
                 <c.icon className="w-6 h-6" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h2 className="font-display font-semibold text-lg text-white group-hover:text-brand-200 transition-colors">
                   {c.title}
                 </h2>
