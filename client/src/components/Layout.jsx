@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Sidebar from "./Sidebar";
 
@@ -37,9 +37,9 @@ export default function Layout() {
       <div className="flex-1 min-w-0">
         <header className="md:hidden sticky top-0 z-20 border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-sm px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="font-display font-bold text-lg text-white tracking-tight">
+            <Link to="/dashboard" className="font-display font-bold text-lg text-white tracking-tight">
               Hire<span className="text-brand-400">Mind</span>
-            </div>
+            </Link>
             <button
               type="button"
               onClick={() => setMobileMenuOpen((v) => !v)}

@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
   FileSearch,
@@ -30,17 +30,21 @@ export default function Sidebar({ onLogout, userName, mobileMenuOpen, onCloseMob
         />
       )}
       <aside
-        className={`w-64 shrink-0 border-r border-slate-800/80 bg-slate-900/95 backdrop-blur-sm min-h-screen flex flex-col fixed inset-y-0 left-0 z-40 transform transition-transform duration-200 md:static md:z-auto md:translate-x-0 ${
+        className={`w-64 shrink-0 border-r border-slate-800/80 bg-slate-900/95 backdrop-blur-sm h-[100dvh] md:min-h-screen flex flex-col fixed inset-y-0 left-0 z-40 transform transition-transform duration-200 md:static md:z-auto md:translate-x-0 ${
           mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="p-6 border-b border-slate-800/80">
-          <div className="font-display font-bold text-xl text-white tracking-tight">
+          <Link
+            to="/dashboard"
+            onClick={onCloseMobileMenu}
+            className="inline-block font-display font-bold text-xl text-white tracking-tight"
+          >
             Hire<span className="text-brand-400">Mind</span>
-          </div>
+          </Link>
           <p className="text-xs text-slate-500 mt-1 truncate">{userName}</p>
         </div>
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-3 pb-4 space-y-1 overflow-y-auto">
           {links.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
@@ -58,20 +62,18 @@ export default function Sidebar({ onLogout, userName, mobileMenuOpen, onCloseMob
               {label}
             </NavLink>
           ))}
-        </nav>
-        <div className="p-3 border-t border-slate-800/80">
           <button
             type="button"
             onClick={() => {
               onCloseMobileMenu?.();
               onLogout();
             }}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            className="mt-2 flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
           >
             <LogOut className="w-5 h-5" />
             Logout
           </button>
-        </div>
+        </nav>
       </aside>
     </>
   );
