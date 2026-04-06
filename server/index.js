@@ -43,11 +43,13 @@ app.use((err, _req, res, _next) => {
 });
 
 async function main() {
-  console.log("MONGO_URI:", process.env.MONGO_URI);
-  await connectDB();
   app.listen(PORT, () => {
     console.log(`HireMind API listening on port ${PORT}`);
   });
+
+  console.log("Connecting to MongoDB...");
+  await connectDB();
+  console.log("MongoDB connected");
 }
 
 main().catch((e) => {
