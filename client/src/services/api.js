@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_PROXY || "/api";
+const baseURL = import.meta.env.VITE_API_PROXY;
 
 export const api = axios.create({
   baseURL,
