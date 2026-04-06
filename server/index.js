@@ -47,9 +47,13 @@ async function main() {
     console.log(`HireMind API listening on port ${PORT}`);
   });
 
-  console.log("Connecting to MongoDB...");
-  await connectDB();
-  console.log("MongoDB connected");
+  try {
+    console.log("Connecting to MongoDB...");
+    await connectDB();
+    console.log("MongoDB connected");
+  } catch (err) {
+    console.error("MongoDB connection failed:", err);
+  }
 }
 
 main().catch((e) => {
