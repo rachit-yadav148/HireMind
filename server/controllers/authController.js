@@ -90,11 +90,7 @@ export async function resendEmailOtp(req, res) {
     user.emailOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
 
-    if (canSendMail()) {
-      await sendSignupOtpEmail({ toEmail: user.email, otp });
-    } else {
-      console.log(`Signup OTP for ${user.email}: ${otp}`);
-    }
+    triggerSignupOtpEmail(user.email, otp);
 
     return res.json({
       message: "OTP resent successfully.",
@@ -115,6 +111,17 @@ function hashEmailOtp(otp) {
 
 function createEmailOtp() {
   return String(crypto.randomInt(100000, 1000000));
+}
+
+function triggerSignupOtpEmail(toEmail, otp) {
+  if (!canSendMail()) {
+    console.log(`Signup OTP for ${toEmail}: ${otp}`);
+    return;
+  }
+
+  void sendSignupOtpEmail({ toEmail, otp }).catch((err) => {
+    console.error(`Failed to send signup OTP email to ${toEmail}:`, err?.message || err);
+  });
 }
 
 export async function register(req, res) {
@@ -155,14 +162,7 @@ export async function register(req, res) {
     user.emailOtpExpiresAt = otpExpiresAt;
     await user.save();
 
-    if (canSendMail()) {
-      await sendSignupOtpEmail({
-        toEmail: user.email,
-        otp,
-      });
-    } else {
-      console.log(`Signup OTP for ${user.email}: ${otp}`);
-    }
+    triggerSignupOtpEmail(user.email, otp);
 
     return res.status(201).json({
       message: "OTP sent to your email. Verify to complete signup.",
