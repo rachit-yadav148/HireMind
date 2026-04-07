@@ -29,6 +29,7 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
   const [error, setError] = useState("");
   const recRef = useRef(null);
   const finalRef = useRef("");
+  const shouldKeepListeningRef = useRef(false);
 
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -59,10 +60,21 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
       if (e.error === "no-speech" || e.error === "aborted") return;
       setError(normalizeSpeechError(e.error));
       setListening(false);
+      shouldKeepListeningRef.current = false;
     };
 
     rec.onend = () => {
-      setListening(false);
+      if (!shouldKeepListeningRef.current) {
+        setListening(false);
+        return;
+      }
+
+      try {
+        rec.start();
+        setListening(true);
+      } catch {
+        setListening(false);
+      }
     };
 
     recRef.current = rec;
@@ -81,12 +93,14 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
     setTranscript("");
     const rec = recRef.current;
     if (!rec) return;
+    shouldKeepListeningRef.current = true;
 
     const startRecognition = () => {
       try {
         rec.start();
         setListening(true);
       } catch {
+        shouldKeepListeningRef.current = false;
         setError("Could not start microphone");
       }
     };
@@ -103,6 +117,7 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
         startRecognition();
       })
       .catch((err) => {
+        shouldKeepListeningRef.current = false;
         const code = String(err?.name || err?.message || "").toLowerCase();
         if (code.includes("notallowed") || code.includes("permission") || code.includes("denied")) {
           setError("Microphone permission denied. Enable it in browser/site settings and reload.");
@@ -115,6 +130,7 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
   const stop = useCallback(() => {
     const rec = recRef.current;
     if (!rec) return;
+    shouldKeepListeningRef.current = false;
     try {
       rec.stop();
     } catch {

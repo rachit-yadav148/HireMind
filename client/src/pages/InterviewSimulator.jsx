@@ -57,7 +57,6 @@ export default function InterviewSimulator() {
   const [ratingLoading, setRatingLoading] = useState(false);
   const [ratingMessage, setRatingMessage] = useState("");
   const [ttsError, setTtsError] = useState("");
-  const [audioBootstrapping, setAudioBootstrapping] = useState(false);
   const [audioStatus, setAudioStatus] = useState("");
 
   const { supported, listening, transcript, error: speechErr, start, stop, reset } =
@@ -278,12 +277,10 @@ export default function InterviewSimulator() {
 
   async function enableAudioAndMic() {
     setAudioStatus("");
-    setAudioBootstrapping(true);
     primeSpeechSynthesis();
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setAudioStatus("Microphone permission API is not available in this browser. Use typing fallback.");
-      setAudioBootstrapping(false);
       return;
     }
 
@@ -298,8 +295,6 @@ export default function InterviewSimulator() {
       } else {
         setAudioStatus("Could not initialize microphone. You can still type your answer below.");
       }
-    } finally {
-      setAudioBootstrapping(false);
     }
   }
 
@@ -476,14 +471,6 @@ export default function InterviewSimulator() {
             />
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={enableAudioAndMic}
-                disabled={loading || audioBootstrapping}
-                className="font-medium bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
-              >
-                {audioBootstrapping ? "Enabling…" : "Enable Audio & Mic"}
-              </button>
               {!listening ? (
                 <button
                   type="button"
