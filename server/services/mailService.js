@@ -27,14 +27,78 @@ async function createTransporter() {
     port,
     secure,
     auth: { user, pass },
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 20000),
+    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 15000),
+    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 30000),
   });
+}
+
+function isTimeoutLikeError(err) {
+  const code = String(err?.code || "").toUpperCase();
+  const message = String(err?.message || "").toLowerCase();
+  return (
+    code.includes("TIMEOUT") ||
+    code === "ESOCKET" ||
+    message.includes("timeout") ||
+    message.includes("timed out")
+  );
+}
+
+function getGmailFallbackConfig() {
+  const current = getSmtpConfig();
+  if (!String(current.host || "").toLowerCase().includes("gmail.com")) {
+    return null;
+  }
+
+  if (current.port === 587 && current.secure === false) {
+    return { ...current, port: 465, secure: true };
+  }
+  if (current.port === 465 && current.secure === true) {
+    return { ...current, port: 587, secure: false };
+  }
+  return null;
+}
+
+async function sendMailWithConfig(config, payload) {
+  const mod = await import("nodemailer");
+  const nodemailer = mod?.default || mod;
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: { user: config.user, pass: config.pass },
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 20000),
+    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 15000),
+    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 30000),
+  });
+
+  await transporter.sendMail(payload);
+}
+
+async function sendMailWithRetry(payload) {
+  const primary = getSmtpConfig();
+  await sendMailWithConfig(primary, payload);
+}
+
+async function sendMailResilient(payload) {
+  try {
+    await sendMailWithRetry(payload);
+  } catch (err) {
+    const fallback = getGmailFallbackConfig();
+    if (!fallback || !isTimeoutLikeError(err)) {
+      throw err;
+    }
+
+    console.warn(
+      `[MAIL] Primary SMTP failed (${err?.message || err}). Retrying with Gmail fallback ${fallback.port}/${fallback.secure}.`
+    );
+    await sendMailWithConfig(fallback, payload);
+  }
 }
 
 export async function sendPasswordResetEmail({ toEmail, resetUrl }) {
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-  const transporter = await createTransporter();
-
-  await transporter.sendMail({
+  await sendMailResilient({
     from,
     to: toEmail,
     subject: "HireMind password reset",
@@ -45,9 +109,7 @@ export async function sendPasswordResetEmail({ toEmail, resetUrl }) {
 
 export async function sendSignupOtpEmail({ toEmail, otp }) {
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-  const transporter = await createTransporter();
-
-  await transporter.sendMail({
+  await sendMailResilient({
     from,
     to: toEmail,
     subject: "HireMind email verification OTP",
