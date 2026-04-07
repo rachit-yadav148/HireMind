@@ -1,5 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+function normalizeSpeechError(err) {
+  const code = String(err || "").toLowerCase();
+  if (code === "service-not-allowed" || code === "not-allowed") {
+    return "Microphone access is blocked. Allow mic permission in browser/site settings and reload.";
+  }
+  if (code === "audio-capture") {
+    return "No microphone was found. Connect/enable a microphone and try again.";
+  }
+  return code || "speech_error";
+}
+
+function isIOSLikeDevice() {
+  if (typeof navigator === "undefined") return false;
+  return (
+    /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
 /**
  * Web Speech API hook. Returns { supported, listening, transcript, error, start, stop, reset }
  */
@@ -19,7 +38,7 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
     }
     setSupported(true);
     const rec = new SR();
-    rec.continuous = true;
+    rec.continuous = !isIOSLikeDevice();
     rec.interimResults = true;
     rec.lang = lang;
 
@@ -38,7 +57,7 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
 
     rec.onerror = (e) => {
       if (e.error === "no-speech" || e.error === "aborted") return;
-      setError(e.error || "speech_error");
+      setError(normalizeSpeechError(e.error));
       setListening(false);
     };
 
@@ -62,12 +81,35 @@ export function useSpeechRecognition({ lang = "en-US" } = {}) {
     setTranscript("");
     const rec = recRef.current;
     if (!rec) return;
-    try {
-      rec.start();
-      setListening(true);
-    } catch {
-      setError("Could not start microphone");
+
+    const startRecognition = () => {
+      try {
+        rec.start();
+        setListening(true);
+      } catch {
+        setError("Could not start microphone");
+      }
+    };
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      startRecognition();
+      return;
     }
+
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        stream.getTracks().forEach((t) => t.stop());
+        startRecognition();
+      })
+      .catch((err) => {
+        const code = String(err?.name || err?.message || "").toLowerCase();
+        if (code.includes("notallowed") || code.includes("permission") || code.includes("denied")) {
+          setError("Microphone permission denied. Enable it in browser/site settings and reload.");
+          return;
+        }
+        setError("Could not access microphone");
+      });
   }, []);
 
   const stop = useCallback(() => {

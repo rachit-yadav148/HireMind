@@ -56,14 +56,71 @@ export default function InterviewSimulator() {
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [ratingLoading, setRatingLoading] = useState(false);
   const [ratingMessage, setRatingMessage] = useState("");
+  const [ttsError, setTtsError] = useState("");
+  const [audioBootstrapping, setAudioBootstrapping] = useState(false);
+  const [audioStatus, setAudioStatus] = useState("");
 
   const { supported, listening, transcript, error: speechErr, start, stop, reset } =
     useSpeechRecognition();
 
   const [typedAnswer, setTypedAnswer] = useState("");
 
+  const isMobileBrowser = useCallback(() => {
+    if (typeof window === "undefined") return false;
+    const touchDevice = navigator.maxTouchPoints > 0;
+    const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
+    return Boolean(touchDevice || coarsePointer);
+  }, []);
+
   const appendMsg = useCallback((role, content, extra = {}) => {
     setMessages((m) => [...m, { role, content, ...extra, t: Date.now() }]);
+  }, []);
+
+  const primeSpeechSynthesis = useCallback(() => {
+    if (!window.speechSynthesis || typeof window.SpeechSynthesisUtterance === "undefined") {
+      setTtsError("Text-to-speech is not supported in this browser.");
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      const primer = new SpeechSynthesisUtterance(" ");
+      primer.volume = 0;
+      window.speechSynthesis.speak(primer);
+      setTtsError("");
+    } catch {
+      setTtsError("Question audio is blocked. Tap Replay question and check volume/silent mode.");
+    }
+  }, []);
+
+  const speakText = useCallback((text, onEnd) => {
+    if (!text || !window.speechSynthesis || typeof window.SpeechSynthesisUtterance === "undefined") {
+      onEnd?.();
+      return;
+    }
+
+    try {
+      setTtsError("");
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.95;
+      u.pitch = 1;
+      u.onend = () => onEnd?.();
+      u.onerror = () => {
+        setTtsError("Could not play question audio. Tap Replay question and increase media volume.");
+        onEnd?.();
+      };
+      window.speechSynthesis.speak(u);
+
+      window.setTimeout(() => {
+        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
+          setTtsError("Question audio may be blocked. Tap Replay question once to enable TTS.");
+        }
+      }, 600);
+    } catch {
+      setTtsError("Could not play question audio. Tap Replay question and increase media volume.");
+      onEnd?.();
+    }
   }, []);
 
   useEffect(() => {
@@ -90,6 +147,10 @@ export default function InterviewSimulator() {
   async function handleStart(e) {
     e.preventDefault();
     setApiError("");
+    primeSpeechSynthesis();
+    if (isMobileBrowser()) {
+      void enableAudioAndMic();
+    }
     if (!resumeFile) {
       setApiError("Resume is required to start interview.");
       return;
@@ -117,7 +178,7 @@ export default function InterviewSimulator() {
       setRatingSubmitted(false);
       setRatingMessage("");
       appendMsg("interviewer", data.question);
-      speak(data.question);
+      speakText(data.question);
       reset();
     } catch (err) {
       setApiError(err.response?.data?.message || "Could not start interview");
@@ -151,7 +212,7 @@ export default function InterviewSimulator() {
         setReport(data.report);
         setTimerActive(false);
         setCurrentQuestion("");
-        speak("Interview complete. Here is your report summary.");
+        speakText("Interview complete. Here is your report summary.");
         return;
       }
 
@@ -159,7 +220,7 @@ export default function InterviewSimulator() {
         setCurrentQuestion(data.nextQuestion);
         setStage(data.stage || stage);
         appendMsg("interviewer", data.nextQuestion);
-        speak(data.nextQuestion);
+        speakText(data.nextQuestion);
       }
       reset();
       setTypedAnswer("");
@@ -186,7 +247,7 @@ export default function InterviewSimulator() {
         setReport(data.report);
         setTimerActive(false);
         setCurrentQuestion("");
-        speak(
+        speakText(
           isTimerTriggered
             ? "Time is up. Interview ended. Here is your summary and score."
             : "Interview ended. Here is your summary and score."
@@ -215,8 +276,36 @@ export default function InterviewSimulator() {
     }
   }
 
+  async function enableAudioAndMic() {
+    setAudioStatus("");
+    setAudioBootstrapping(true);
+    primeSpeechSynthesis();
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setAudioStatus("Microphone permission API is not available in this browser. Use typing fallback.");
+      setAudioBootstrapping(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      setAudioStatus("Audio and microphone are enabled. You can start speaking now.");
+    } catch (err) {
+      const code = String(err?.name || err?.message || "").toLowerCase();
+      if (code.includes("notallowed") || code.includes("permission") || code.includes("denied")) {
+        setAudioStatus("Microphone permission denied. Allow mic in browser/site settings and reload.");
+      } else {
+        setAudioStatus("Could not initialize microphone. You can still type your answer below.");
+      }
+    } finally {
+      setAudioBootstrapping(false);
+    }
+  }
+
   function replayQuestion() {
-    if (currentQuestion) speak(currentQuestion);
+    primeSpeechSynthesis();
+    if (currentQuestion) speakText(currentQuestion);
   }
 
   return (
@@ -362,11 +451,17 @@ export default function InterviewSimulator() {
             <h3 className="font-display font-semibold text-white">Your answer</h3>
             {!supported && (
               <p className="text-xs text-amber-400">
-                Speech recognition is not supported in this browser. Use Chrome or Edge for voice
-                input, or paste text below if we add it later.
+                Voice input is not supported in this browser/device combination. Open over HTTPS,
+                allow microphone permission, or type your answer below.
               </p>
             )}
             {speechErr && <p className="text-xs text-red-400">Mic: {speechErr}</p>}
+            {ttsError && <p className="text-xs text-amber-300">TTS: {ttsError}</p>}
+            {audioStatus && (
+              <p className={`text-xs ${audioStatus.includes("enabled") ? "text-emerald-300" : "text-amber-300"}`}>
+                Audio: {audioStatus}
+              </p>
+            )}
 
             <div className="rounded-lg bg-slate-950 border border-slate-700 min-h-[100px] p-3 text-sm text-slate-300">
               {transcript || (listening ? "Listening…" : "Press start and speak your answer.")}
@@ -381,6 +476,14 @@ export default function InterviewSimulator() {
             />
 
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={enableAudioAndMic}
+                disabled={loading || audioBootstrapping}
+                className="font-medium bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+              >
+                {audioBootstrapping ? "Enabling…" : "Enable Audio & Mic"}
+              </button>
               {!listening ? (
                 <button
                   type="button"
