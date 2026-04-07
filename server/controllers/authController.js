@@ -22,6 +22,7 @@ export async function verifyEmailOtp(req, res) {
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
+    console.log(`[OTP] Verify OTP request received for ${normalizedEmail}`);
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(400).json({ message: "Invalid email or OTP" });
@@ -114,14 +115,23 @@ function createEmailOtp() {
 }
 
 function triggerSignupOtpEmail(toEmail, otp) {
+  console.log(`[OTP] Attempting OTP delivery to ${toEmail}`);
+
   if (!canSendMail()) {
-    console.log(`Signup OTP for ${toEmail}: ${otp}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Signup OTP for ${toEmail}: ${otp}`);
+    }
+    console.warn(`[OTP] SMTP not configured. OTP email not sent for ${toEmail}`);
     return;
   }
 
-  void sendSignupOtpEmail({ toEmail, otp }).catch((err) => {
-    console.error(`Failed to send signup OTP email to ${toEmail}:`, err?.message || err);
-  });
+  void sendSignupOtpEmail({ toEmail, otp })
+    .then(() => {
+      console.log(`[OTP] OTP email sent successfully to ${toEmail}`);
+    })
+    .catch((err) => {
+      console.error(`[OTP] Failed to send signup OTP email to ${toEmail}:`, err?.message || err);
+    });
 }
 
 export async function register(req, res) {
@@ -134,6 +144,7 @@ export async function register(req, res) {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
     const normalizedEmail = String(email).toLowerCase().trim();
+    console.log(`[OTP] Register request received for ${normalizedEmail}`);
     const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     const otp = createEmailOtp();
     const otpHash = hashEmailOtp(otp);
