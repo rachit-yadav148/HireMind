@@ -8,9 +8,20 @@ function getSmtpConfig() {
   return { host, port, user, pass, secure };
 }
 
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM || process.env.SMTP_FROM || process.env.SMTP_USER;
+  return { apiKey, from };
+}
+
 export function canSendMail() {
   const { host, port, user, pass } = getSmtpConfig();
   return Boolean(host && port && user && pass);
+}
+
+function canSendViaResend() {
+  const { apiKey, from } = getResendConfig();
+  return Boolean(apiKey && from);
 }
 
 async function createTransporter() {
@@ -80,19 +91,58 @@ async function sendMailWithRetry(payload) {
   await sendMailWithConfig(primary, payload);
 }
 
+async function sendMailWithResend(payload) {
+  const { apiKey, from } = getResendConfig();
+  if (!apiKey || !from) {
+    throw new Error("Resend is not configured. Set RESEND_API_KEY and RESEND_FROM.");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: payload.to,
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Resend API failed (${response.status}): ${body.slice(0, 200)}`);
+  }
+}
+
 async function sendMailResilient(payload) {
   try {
     await sendMailWithRetry(payload);
+    return;
   } catch (err) {
     const fallback = getGmailFallbackConfig();
-    if (!fallback || !isTimeoutLikeError(err)) {
-      throw err;
+    if (fallback && isTimeoutLikeError(err)) {
+      try {
+        console.warn(
+          `[MAIL] Primary SMTP failed (${err?.message || err}). Retrying with Gmail fallback ${fallback.port}/${fallback.secure}.`
+        );
+        await sendMailWithConfig(fallback, payload);
+        return;
+      } catch (gmailFallbackErr) {
+        err = gmailFallbackErr;
+      }
     }
 
-    console.warn(
-      `[MAIL] Primary SMTP failed (${err?.message || err}). Retrying with Gmail fallback ${fallback.port}/${fallback.secure}.`
-    );
-    await sendMailWithConfig(fallback, payload);
+    if (canSendViaResend()) {
+      console.warn(`[MAIL] SMTP delivery failed. Falling back to Resend API. Reason: ${err?.message || err}`);
+      await sendMailWithResend(payload);
+      return;
+    }
+
+    throw err;
   }
 }
 
