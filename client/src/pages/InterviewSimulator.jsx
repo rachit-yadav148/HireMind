@@ -287,7 +287,7 @@ export default function InterviewSimulator() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
-      setAudioStatus("Audio and microphone are enabled. You can start speaking now.");
+      setAudioStatus("Click on Start microphone and start speaking.");
     } catch (err) {
       const code = String(err?.name || err?.message || "").toLowerCase();
       if (code.includes("notallowed") || code.includes("permission") || code.includes("denied")) {
@@ -454,7 +454,7 @@ export default function InterviewSimulator() {
             {ttsError && <p className="text-xs text-amber-300">TTS: {ttsError}</p>}
             {audioStatus && (
               <p className={`text-xs ${audioStatus.includes("enabled") ? "text-emerald-300" : "text-amber-300"}`}>
-                Audio: {audioStatus}
+                {audioStatus}
               </p>
             )}
 
