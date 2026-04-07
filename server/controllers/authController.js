@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
-import { canSendMail, sendPasswordResetEmail } from "../services/mailService.js";
+import { canSendMail, sendPasswordResetEmail, sendSignupOtpEmail } from "../services/mailService.js";
 
 const BCRYPT_SALT_ROUNDS = Math.max(8, Math.min(14, Number(process.env.BCRYPT_SALT_ROUNDS || 10)));
 
@@ -14,8 +14,107 @@ function signToken(user) {
   });
 }
 
+export async function verifyEmailOtp(req, res) {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required" });
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(400).json({ message: "Invalid email or OTP" });
+    }
+    if (user.isEmailVerified) {
+      const token = signToken(user);
+      return res.json({
+        message: "Email already verified.",
+        token,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+        },
+      });
+    }
+
+    const isValidOtp =
+      user.emailOtpHash &&
+      user.emailOtpHash === hashEmailOtp(otp) &&
+      user.emailOtpExpiresAt &&
+      new Date(user.emailOtpExpiresAt).getTime() > Date.now();
+
+    if (!isValidOtp) {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
+
+    user.isEmailVerified = true;
+    user.emailOtpHash = null;
+    user.emailOtpExpiresAt = null;
+    await user.save();
+
+    const token = signToken(user);
+    return res.json({
+      message: "Email verified successfully.",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message || "Failed to verify OTP" });
+  }
+}
+
+export async function resendEmailOtp(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(400).json({ message: "No signup found for this email" });
+    }
+    if (user.isEmailVerified) {
+      return res.status(400).json({ message: "Email already verified" });
+    }
+
+    const otp = createEmailOtp();
+    user.emailOtpHash = hashEmailOtp(otp);
+    user.emailOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save();
+
+    if (canSendMail()) {
+      await sendSignupOtpEmail({ toEmail: user.email, otp });
+    } else {
+      console.log(`Signup OTP for ${user.email}: ${otp}`);
+    }
+
+    return res.json({
+      message: "OTP resent successfully.",
+      ...(process.env.NODE_ENV !== "production" && !canSendMail() ? { devOtp: otp } : {}),
+    });
+  } catch (err) {
+    return res.status(500).json({ message: err.message || "Failed to resend OTP" });
+  }
+}
+
 function hashResetToken(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
+function hashEmailOtp(otp) {
+  return crypto.createHash("sha256").update(String(otp)).digest("hex");
+}
+
+function createEmailOtp() {
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 export async function register(req, res) {
@@ -29,19 +128,47 @@ export async function register(req, res) {
     }
     const normalizedEmail = String(email).toLowerCase().trim();
     const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-    const user = await User.create({
-      name: name.trim(),
-      email: normalizedEmail,
-      password: hashed,
-    });
-    const token = signToken(user);
-    res.status(201).json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
+    const otp = createEmailOtp();
+    const otpHash = hashEmailOtp(otp);
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    const existing = await User.findOne({ email: normalizedEmail }).select(
+      "name email password isEmailVerified"
+    );
+    if (existing?.isEmailVerified) {
+      return res.status(409).json({ message: "Email already registered" });
+    }
+
+    const user =
+      existing ||
+      new User({
+        name: name.trim(),
+        email: normalizedEmail,
+        password: hashed,
+      });
+
+    user.name = name.trim();
+    user.email = normalizedEmail;
+    user.password = hashed;
+    user.isEmailVerified = false;
+    user.emailOtpHash = otpHash;
+    user.emailOtpExpiresAt = otpExpiresAt;
+    await user.save();
+
+    if (canSendMail()) {
+      await sendSignupOtpEmail({
+        toEmail: user.email,
+        otp,
+      });
+    } else {
+      console.log(`Signup OTP for ${user.email}: ${otp}`);
+    }
+
+    return res.status(201).json({
+      message: "OTP sent to your email. Verify to complete signup.",
+      requiresOtp: true,
+      email: user.email,
+      ...(process.env.NODE_ENV !== "production" && !canSendMail() ? { devOtp: otp } : {}),
     });
   } catch (err) {
     if (err?.code === 11000) {
@@ -139,9 +266,14 @@ export async function login(req, res) {
       return res.status(400).json({ message: "Email and password are required" });
     }
     const normalizedEmail = String(email).toLowerCase().trim();
-    const user = await User.findOne({ email: normalizedEmail }).select("name email password");
+    const user = await User.findOne({ email: normalizedEmail }).select(
+      "name email password isEmailVerified"
+    );
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
+    }
+    if (!user.isEmailVerified) {
+      return res.status(403).json({ message: "Please verify your email with OTP before logging in." });
     }
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) {

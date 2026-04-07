@@ -5,6 +5,8 @@ import { forgotPasswordRateLimit } from "../middleware/rateLimit.js";
 
 const r = Router();
 r.post("/register", auth.register);
+r.post("/verify-email-otp", auth.verifyEmailOtp);
+r.post("/resend-email-otp", auth.resendEmailOtp);
 r.post("/login", auth.login);
 r.post("/forgot-password", forgotPasswordRateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), auth.forgotPassword);
 r.post("/reset-password", auth.resetPassword);

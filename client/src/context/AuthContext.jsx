@@ -32,9 +32,19 @@ export function AuthProvider({ children }) {
 
   const register = async (name, email, password) => {
     const { data } = await api.post("/auth/register", { name, email, password });
+    return data;
+  };
+
+  const verifySignupOtp = async (email, otp) => {
+    const { data } = await api.post("/auth/verify-email-otp", { email, otp });
     setAuthToken(data.token);
     setUser(data.user);
-    return data.user;
+    return data;
+  };
+
+  const resendSignupOtp = async (email) => {
+    const { data } = await api.post("/auth/resend-email-otp", { email });
+    return data;
   };
 
   const logout = () => {
@@ -49,6 +59,8 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(user),
       login,
       register,
+      verifySignupOtp,
+      resendSignupOtp,
       logout,
     }),
     [user, loading]

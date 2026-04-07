@@ -42,3 +42,16 @@ export async function sendPasswordResetEmail({ toEmail, resetUrl }) {
     html: `<p>You requested a password reset.</p><p>Use this link within 15 minutes:</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
   });
 }
+
+export async function sendSignupOtpEmail({ toEmail, otp }) {
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  const transporter = await createTransporter();
+
+  await transporter.sendMail({
+    from,
+    to: toEmail,
+    subject: "HireMind email verification OTP",
+    text: `Your HireMind signup OTP is ${otp}. It is valid for 10 minutes.`,
+    html: `<p>Your HireMind signup OTP is <b>${otp}</b>.</p><p>It is valid for 10 minutes.</p>`,
+  });
+}
