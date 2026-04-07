@@ -4,6 +4,8 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { canSendMail, sendPasswordResetEmail } from "../services/mailService.js";
 
+const BCRYPT_SALT_ROUNDS = Math.max(8, Math.min(14, Number(process.env.BCRYPT_SALT_ROUNDS || 10)));
+
 function signToken(user) {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET is not set");
@@ -25,14 +27,11 @@ export async function register(req, res) {
     if (password.length < 6) {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
-    const existing = await User.findOne({ email: email.toLowerCase() });
-    if (existing) {
-      return res.status(409).json({ message: "Email already registered" });
-    }
-    const hashed = await bcrypt.hash(password, 12);
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     const user = await User.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       password: hashed,
     });
     const token = signToken(user);
@@ -45,6 +44,9 @@ export async function register(req, res) {
       },
     });
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ message: "Email already registered" });
+    }
     console.error(err);
     res.status(500).json({ message: err.message || "Registration failed" });
   }
@@ -119,7 +121,7 @@ export async function resetPassword(req, res) {
       return res.status(400).json({ message: "Invalid or expired reset link" });
     }
 
-    user.password = await bcrypt.hash(newPassword, 12);
+    user.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
     user.resetPasswordTokenHash = null;
     user.resetPasswordExpiresAt = null;
     await user.save();
@@ -136,7 +138,8 @@ export async function login(req, res) {
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required" });
     }
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail }).select("name email password");
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
