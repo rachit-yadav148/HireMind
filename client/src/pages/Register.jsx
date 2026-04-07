@@ -41,9 +41,13 @@ export default function Register() {
     try {
       if (!otpStep) {
         const data = await register(name, email, password);
-        setOtpStep(true);
-        setOtpCooldown(OTP_RESEND_COOLDOWN_SECONDS);
-        setMessage(data?.message || "OTP sent to your email. Enter it to verify your account.");
+        if (data?.requiresOtp) {
+          setOtpStep(true);
+          setOtpCooldown(OTP_RESEND_COOLDOWN_SECONDS);
+          setMessage(data?.message || "OTP sent to your email. Enter it to verify your account.");
+        } else {
+          navigate("/dashboard", { replace: true });
+        }
       } else {
         await verifySignupOtp(email, otp);
         navigate("/dashboard", { replace: true });

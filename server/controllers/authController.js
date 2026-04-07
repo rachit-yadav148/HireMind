@@ -6,6 +6,10 @@ import { canSendMail, sendPasswordResetEmail, sendSignupOtpEmail } from "../serv
 
 const BCRYPT_SALT_ROUNDS = Math.max(8, Math.min(14, Number(process.env.BCRYPT_SALT_ROUNDS || 10)));
 
+function isEmailOtpVerificationEnabled() {
+  return String(process.env.ENABLE_EMAIL_OTP_VERIFICATION || "false").toLowerCase() === "true";
+}
+
 function signToken(user) {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET is not set");
@@ -16,6 +20,10 @@ function signToken(user) {
 
 export async function verifyEmailOtp(req, res) {
   try {
+    if (!isEmailOtpVerificationEnabled()) {
+      return res.status(400).json({ message: "Email OTP verification is currently disabled." });
+    }
+
     const { email, otp } = req.body;
     if (!email || !otp) {
       return res.status(400).json({ message: "Email and OTP are required" });
@@ -72,6 +80,10 @@ export async function verifyEmailOtp(req, res) {
 
 export async function resendEmailOtp(req, res) {
   try {
+    if (!isEmailOtpVerificationEnabled()) {
+      return res.status(400).json({ message: "Email OTP verification is currently disabled." });
+    }
+
     const { email } = req.body;
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
@@ -144,11 +156,11 @@ export async function register(req, res) {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
     const normalizedEmail = String(email).toLowerCase().trim();
-    console.log(`[OTP] Register request received for ${normalizedEmail}`);
+    const otpEnabled = isEmailOtpVerificationEnabled();
+    if (otpEnabled) {
+      console.log(`[OTP] Register request received for ${normalizedEmail}`);
+    }
     const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-    const otp = createEmailOtp();
-    const otpHash = hashEmailOtp(otp);
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     const existing = await User.findOne({ email: normalizedEmail }).select(
       "name email password isEmailVerified"
@@ -168,18 +180,40 @@ export async function register(req, res) {
     user.name = name.trim();
     user.email = normalizedEmail;
     user.password = hashed;
-    user.isEmailVerified = false;
-    user.emailOtpHash = otpHash;
-    user.emailOtpExpiresAt = otpExpiresAt;
+
+    if (otpEnabled) {
+      const otp = createEmailOtp();
+      const otpHash = hashEmailOtp(otp);
+      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      user.isEmailVerified = false;
+      user.emailOtpHash = otpHash;
+      user.emailOtpExpiresAt = otpExpiresAt;
+      await user.save();
+
+      triggerSignupOtpEmail(user.email, otp);
+
+      return res.status(201).json({
+        message: "OTP sent to your email. Verify to complete signup.",
+        requiresOtp: true,
+        email: user.email,
+        ...(process.env.NODE_ENV !== "production" && !canSendMail() ? { devOtp: otp } : {}),
+      });
+    }
+
+    user.isEmailVerified = true;
+    user.emailOtpHash = null;
+    user.emailOtpExpiresAt = null;
     await user.save();
 
-    triggerSignupOtpEmail(user.email, otp);
-
+    const token = signToken(user);
     return res.status(201).json({
-      message: "OTP sent to your email. Verify to complete signup.",
-      requiresOtp: true,
-      email: user.email,
-      ...(process.env.NODE_ENV !== "production" && !canSendMail() ? { devOtp: otp } : {}),
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
     });
   } catch (err) {
     if (err?.code === 11000) {
@@ -283,7 +317,7 @@ export async function login(req, res) {
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
-    if (!user.isEmailVerified) {
+    if (isEmailOtpVerificationEnabled() && !user.isEmailVerified) {
       return res.status(403).json({ message: "Please verify your email with OTP before logging in." });
     }
     const ok = await bcrypt.compare(password, user.password);
