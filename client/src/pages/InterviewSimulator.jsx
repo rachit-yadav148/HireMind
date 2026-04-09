@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
+import posthog from "../posthog";
 
 const TIMER_OPTIONS = [
   { label: "15 min", value: 15 },
@@ -177,6 +178,11 @@ export default function InterviewSimulator() {
       setRatingSubmitted(false);
       setRatingMessage("");
       appendMsg("interviewer", data.question);
+      posthog.capture("interview_started", {
+        company,
+        role,
+        duration_minutes: durationMinutes,
+      });
       speakText(data.question);
       reset();
     } catch (err) {
@@ -208,9 +214,13 @@ export default function InterviewSimulator() {
       appendMsg("feedback", data.feedback, { kind: "feedback" });
 
       if (data.completed && data.report) {
+        const answeredCount = messages.filter((m) => m.role === "you").length + 1;
         setReport(data.report);
         setTimerActive(false);
         setCurrentQuestion("");
+        posthog.capture("interview_completed", {
+          questions_answered: answeredCount,
+        });
         speakText("Interview complete. Here is your report summary.");
         return;
       }
@@ -243,9 +253,13 @@ export default function InterviewSimulator() {
     try {
       const { data } = await api.post("/interviews/end", { sessionId });
       if (data?.report) {
+        const answeredCount = messages.filter((m) => m.role === "you").length;
         setReport(data.report);
         setTimerActive(false);
         setCurrentQuestion("");
+        posthog.capture("interview_completed", {
+          questions_answered: answeredCount,
+        });
         speakText(
           isTimerTriggered
             ? "Time is up. Interview ended. Here is your summary and score."

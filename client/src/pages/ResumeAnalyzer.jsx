@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
+import posthog from "../posthog";
 
 const EMPLOYMENT_TYPES = ["Full-time", "Internship", "Contract", "Part-time"];
 
@@ -54,6 +55,11 @@ export default function ResumeAnalyzer() {
       setResult(data);
       setResumeId(data.resumeId);
       setFeedbackSubmitted(false);
+      const extension = resumeFile?.name?.split(".").pop()?.toLowerCase();
+      posthog.capture("resume_uploaded", {
+        file_type: extension || "unknown",
+      });
+      posthog.capture("resume_analysis_generated");
     } catch (err) {
       setError(err.response?.data?.message || err.message || "Analysis failed");
     } finally {

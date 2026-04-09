@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../services/api";
+import posthog from "../posthog";
 
 const difficultyColors = {
   easy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -33,6 +34,9 @@ export default function QuestionGenerator() {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setBank(data);
+      posthog.capture("question_bank_generated", {
+        company,
+      });
     } catch (err) {
       setError(err.response?.data?.message || "Generation failed");
     } finally {
