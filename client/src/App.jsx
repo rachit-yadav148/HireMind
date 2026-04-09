@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { useEffect } from "react";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 import Landing from "./pages/Landing";
@@ -12,31 +13,48 @@ import InterviewSimulator from "./pages/InterviewSimulator";
 import QuestionGenerator from "./pages/QuestionGenerator";
 import ApplicationTracker from "./pages/ApplicationTracker";
 import Feedback from "./pages/Feedback";
+import posthog from "./posthog";
+
+function PostHogPageviewTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    posthog.capture("$pageview", {
+      $current_url: `${window.location.origin}${location.pathname}${location.search}${location.hash}`,
+      path: location.pathname,
+    });
+  }, [location.pathname, location.search, location.hash]);
+
+  return null;
+}
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/register" element={<Register />} />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Dashboard />} />
-        <Route path="resume" element={<ResumeAnalyzer />} />
-        <Route path="interview" element={<InterviewSimulator />} />
-        <Route path="questions" element={<QuestionGenerator />} />
-        <Route path="applications" element={<ApplicationTracker />} />
-        <Route path="feedback" element={<Feedback />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <PostHogPageviewTracker />
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/register" element={<Register />} />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Dashboard />} />
+          <Route path="resume" element={<ResumeAnalyzer />} />
+          <Route path="interview" element={<InterviewSimulator />} />
+          <Route path="questions" element={<QuestionGenerator />} />
+          <Route path="applications" element={<ApplicationTracker />} />
+          <Route path="feedback" element={<Feedback />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
