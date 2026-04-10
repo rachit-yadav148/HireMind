@@ -197,7 +197,7 @@ Resume to analyze:
 ${resumeSnippet}
 ---`;
 
-  const raw = await generateContent(prompt, { temperature: 0.4 });
+  const raw = await generateContent(prompt, { temperature: 0 });
   const parsed = extractJson(raw);
   if (parsed && typeof parsed.atsScore === "number") {
     const cleanedWeaknesses = uniqueAndConcrete(parsed.weaknesses, 6);
