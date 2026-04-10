@@ -90,6 +90,17 @@ export default function InterviewSimulator() {
       ? getRemainingFreeInterviewTrials()
       : null;
 
+  const guestMode = !isAuthenticated;
+  const pageShellClass = guestMode
+    ? "-mx-4 sm:-mx-6 md:-mx-10 min-h-screen bg-chromatic px-4 py-6 sm:px-6 md:px-10"
+    : "";
+  const innerShellClass = guestMode
+    ? "relative mx-auto w-full max-w-5xl overflow-hidden pb-14"
+    : "mx-auto w-full max-w-5xl pb-10";
+  const surfaceClass = guestMode
+    ? "rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm shadow-card"
+    : "rounded-2xl border border-slate-800 bg-slate-900/40";
+
   const { supported, listening, transcript, error: speechErr, start, stop, reset } =
     useSpeechRecognition();
 
@@ -449,13 +460,13 @@ export default function InterviewSimulator() {
   }
 
   return (
-    <div className="-mx-4 sm:-mx-6 md:-mx-10 min-h-[calc(100vh-5rem)] bg-chromatic px-4 py-6 sm:px-6 md:px-10">
-      <div className="relative mx-auto w-full max-w-5xl overflow-hidden pb-14">
-      <div className="pointer-events-none absolute -top-16 -left-16 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute top-1/3 -right-20 h-64 w-64 rounded-full bg-fuchsia-500/18 blur-3xl" />
-      <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />
+    <div className={pageShellClass}>
+      <div className={innerShellClass}>
+      {guestMode && <div className="pointer-events-none absolute -top-16 -left-16 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />}
+      {guestMode && <div className="pointer-events-none absolute top-1/3 -right-20 h-64 w-64 rounded-full bg-fuchsia-500/18 blur-3xl" />}
+      {guestMode && <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />}
 
-      <div className="relative z-10 mb-6 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 shadow-card">
+      <div className={`relative z-10 mb-6 p-5 md:p-6 ${surfaceClass}`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-display text-2xl md:text-3xl font-bold text-white">AI Interview Simulator</h1>
@@ -470,18 +481,13 @@ export default function InterviewSimulator() {
               <span className="font-semibold"> ~{remainingFreeInterviewMinutes} min</span>
             </div>
           )}
-          {remainingFreeInterviewMinutes === null && isAuthenticated && (
-            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs md:text-sm text-emerald-200">
-              Signed in: free trial counters are hidden
-            </div>
-          )}
         </div>
       </div>
 
       {!sessionId && (
         <form
           onSubmit={handleStart}
-          className="relative z-10 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 mb-8 max-w-2xl grid gap-4 sm:grid-cols-2 shadow-card"
+          className={`relative z-10 p-5 md:p-6 mb-8 max-w-2xl grid gap-4 sm:grid-cols-2 ${surfaceClass}`}
         >
           {apiError && (
             <div className="rounded-xl bg-red-500/10 border border-red-500/30 text-red-200 text-sm px-4 py-3 sm:col-span-2">
@@ -555,7 +561,11 @@ export default function InterviewSimulator() {
           <button
             type="submit"
             disabled={loading}
-            className="sm:col-span-2 font-semibold bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 disabled:opacity-50 text-white py-3 rounded-xl shadow-glow"
+            className={`sm:col-span-2 font-semibold disabled:opacity-50 text-white py-3 rounded-xl ${
+              guestMode
+                ? "bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 shadow-glow"
+                : "bg-brand-500 hover:bg-brand-400"
+            }`}
           >
             {loading ? "Starting…" : "Start voice interview"}
           </button>
@@ -564,7 +574,7 @@ export default function InterviewSimulator() {
 
       {sessionId && !report && (
         <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm min-h-[380px] flex flex-col shadow-card">
+          <div className={`lg:col-span-2 min-h-[380px] flex flex-col ${surfaceClass}`}>
             <div className="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
               <span className="text-xs uppercase tracking-wide text-slate-500">
                 Stage: <span className="text-brand-400">{stage}</span>
@@ -607,7 +617,7 @@ export default function InterviewSimulator() {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-4 space-y-4 h-fit shadow-card">
+          <div className={`p-4 space-y-4 h-fit ${surfaceClass}`}>
             <h3 className="font-display font-semibold text-white">Your answer</h3>
             {!supported && (
               <p className="text-xs text-amber-400">
@@ -658,7 +668,11 @@ export default function InterviewSimulator() {
                 type="button"
                 onClick={submitAnswer}
                 disabled={loading || !currentQuestion}
-                className="font-medium bg-gradient-to-r from-cyan-500 to-brand-500 hover:from-cyan-400 hover:to-brand-400 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+                className={`font-medium disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm ${
+                  guestMode
+                    ? "bg-gradient-to-r from-cyan-500 to-brand-500 hover:from-cyan-400 hover:to-brand-400"
+                    : "bg-brand-500 hover:bg-brand-400"
+                }`}
               >
                 {loading ? "Sending…" : "Submit answer"}
               </button>

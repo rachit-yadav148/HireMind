@@ -160,14 +160,25 @@ export default function ResumeAnalyzer() {
       ? Math.max(0, FREE_RESUME_ANALYSIS_LIMIT - getFreeResumeAnalysisUsed())
       : null;
 
-  return (
-    <div className="-mx-4 sm:-mx-6 md:-mx-10 min-h-[calc(100vh-5rem)] bg-chromatic px-4 py-6 sm:px-6 md:px-10">
-      <div className="relative mx-auto w-full max-w-5xl overflow-hidden pb-14">
-        <div className="pointer-events-none absolute -top-14 -left-14 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />
-        <div className="pointer-events-none absolute top-1/3 -right-16 h-60 w-60 rounded-full bg-fuchsia-500/18 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />
+  const guestMode = !isAuthenticated;
+  const pageShellClass = guestMode
+    ? "-mx-4 sm:-mx-6 md:-mx-10 min-h-screen bg-chromatic px-4 py-6 sm:px-6 md:px-10"
+    : "";
+  const innerShellClass = guestMode
+    ? "relative mx-auto w-full max-w-5xl overflow-hidden pb-14"
+    : "mx-auto w-full max-w-5xl pb-10";
+  const surfaceClass = guestMode
+    ? "rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm shadow-card"
+    : "rounded-2xl border border-slate-800 bg-slate-900/40";
 
-      <div className="relative z-10 mb-6 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 shadow-card">
+  return (
+    <div className={pageShellClass}>
+      <div className={innerShellClass}>
+        {guestMode && <div className="pointer-events-none absolute -top-14 -left-14 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />}
+        {guestMode && <div className="pointer-events-none absolute top-1/3 -right-16 h-60 w-60 rounded-full bg-fuchsia-500/18 blur-3xl" />}
+        {guestMode && <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />}
+
+      <div className={`relative z-10 mb-6 p-5 md:p-6 ${surfaceClass}`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-display text-2xl md:text-3xl font-bold text-white">Resume Analyzer</h1>
@@ -181,11 +192,6 @@ export default function ResumeAnalyzer() {
               Free analyses left: <span className="font-semibold">{remainingFreeAnalyses}</span>
             </div>
           )}
-          {remainingFreeAnalyses === null && isAuthenticated && (
-            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
-              Signed in: free trial counters are hidden
-            </div>
-          )}
         </div>
       </div>
 
@@ -196,7 +202,7 @@ export default function ResumeAnalyzer() {
           </div>
         )}
 
-        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 shadow-card">
+        <div className={`p-5 md:p-6 ${surfaceClass}`}>
           <h2 className="text-base font-semibold text-slate-100 mb-3">Upload your resume</h2>
           <input
             ref={resumeInputRef}
@@ -209,7 +215,11 @@ export default function ResumeAnalyzer() {
             <button
               type="button"
               onClick={() => resumeInputRef.current?.click()}
-              className="font-semibold bg-gradient-to-r from-cyan-500 to-brand-500 hover:from-cyan-400 hover:to-brand-400 text-white px-5 py-2.5 rounded-xl transition-colors"
+              className={`font-semibold text-white px-5 py-2.5 rounded-xl transition-colors ${
+                guestMode
+                  ? "bg-gradient-to-r from-cyan-500 to-brand-500 hover:from-cyan-400 hover:to-brand-400"
+                  : "bg-brand-500 hover:bg-brand-400"
+              }`}
             >
               Choose resume (PDF)
             </button>
@@ -219,7 +229,7 @@ export default function ResumeAnalyzer() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 space-y-4 shadow-card">
+        <div className={`p-5 md:p-6 space-y-4 ${surfaceClass}`}>
           <div>
             <h2 className="text-base font-display font-semibold text-white leading-snug">
               Improve match quality with job context
@@ -297,7 +307,7 @@ export default function ResumeAnalyzer() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate-700/70 bg-slate-900/50 p-5 md:p-6 shadow-card">
+        <div className={`p-5 md:p-6 ${surfaceClass}`}>
           <h2 className="text-sm font-semibold text-slate-200 mb-1">Job Description</h2>
           <p className="text-xs text-slate-500 mb-3">
             Upload the job posting as PDF or image (JPEG, PNG, WebP, GIF). Optional.
@@ -326,7 +336,11 @@ export default function ResumeAnalyzer() {
         <button
           type="submit"
           disabled={loading || !resumeFile}
-          className="w-full md:w-auto font-semibold bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl shadow-glow"
+          className={`w-full md:w-auto font-semibold disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl ${
+            guestMode
+              ? "bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 shadow-glow"
+              : "bg-brand-500 hover:bg-brand-400"
+          }`}
         >
           {loading ? "Analyzing…" : "Analyze resume"}
         </button>
