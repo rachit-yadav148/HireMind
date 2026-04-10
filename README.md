@@ -23,6 +23,7 @@ Copy `server/.env.example` to `server/.env` and set:
 | `JWT_SECRET` | Long random string for signing JWTs |
 | `PORT` | API port (default `5000`) |
 | `CLIENT_URL` | Frontend origin for CORS (default `http://localhost:5173`) |
+| `CLIENT_URLS` | Optional comma-separated extra frontend origins for CORS |
 | `GEMINI_MODEL` | Optional; default `gemini-2.0-flash` |
 
 ### Client (`client/.env` — recommended in dev)
