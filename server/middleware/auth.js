@@ -25,6 +25,14 @@ export function authRequired(req, res, next) {
 }
 
 export function optionalAuth(req, _res, next) {
+  const forceGuest = String(req.headers["x-guest-mode"] || "") === "1";
+  if (forceGuest) {
+    req.userId = undefined;
+    req.userEmail = undefined;
+    next();
+    return;
+  }
+
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
     next();

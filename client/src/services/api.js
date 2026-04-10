@@ -21,11 +21,16 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
   const trialId = getOrCreateTrialId();
+  const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+  const isPublicTryRoute = pathname === "/resume" || pathname === "/interview";
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   if (trialId) {
     config.headers["x-trial-id"] = trialId;
+  }
+  if (isPublicTryRoute) {
+    config.headers["x-guest-mode"] = "1";
   }
   return config;
 });
