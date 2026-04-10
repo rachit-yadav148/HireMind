@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../services/api";
+import { api, getApiErrorMessage } from "../services/api";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import posthog from "../posthog";
+import { useAuth } from "../context/AuthContext";
+import SignupPromptModal from "../components/SignupPromptModal";
+import {
+  FREE_INTERVIEW_LIMIT_SECONDS,
+  addFreeInterviewSecondsUsed,
+  getRemainingFreeInterviewTrials,
+  getFreeInterviewSecondsUsed,
+  hasUsedFreeInterviewTrial,
+  markFreeInterviewTrialUsed,
+  getRemainingFreeInterviewSeconds,
+} from "../utils/freeTrial";
+import { trackAiInterviewFreeLimitReached, trackAiInterviewFreeStarted } from "../utils/tryFreeAnalytics";
 
 const TIMER_OPTIONS = [
   { label: "15 min", value: 15 },
@@ -38,6 +50,7 @@ function speak(text, onEnd) {
 }
 
 export default function InterviewSimulator() {
+  const { isAuthenticated } = useAuth();
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [jdFile, setJdFile] = useState(null);
@@ -59,6 +72,12 @@ export default function InterviewSimulator() {
   const [ratingMessage, setRatingMessage] = useState("");
   const [ttsError, setTtsError] = useState("");
   const [audioStatus, setAudioStatus] = useState("");
+  const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+
+  const remainingFreeInterviewSeconds = !isAuthenticated ? getRemainingFreeInterviewSeconds() : null;
+  const remainingFreeInterviewMinutes =
+    remainingFreeInterviewSeconds !== null ? Math.ceil(remainingFreeInterviewSeconds / 60) : null;
+  const remainingFreeInterviewTrials = !isAuthenticated ? getRemainingFreeInterviewTrials() : null;
 
   const { supported, listening, transcript, error: speechErr, start, stop, reset } =
     useSpeechRecognition();
@@ -132,17 +151,41 @@ export default function InterviewSimulator() {
   useEffect(() => {
     if (!sessionId || report || !timerActive || timeLeft <= 0) return;
     const id = setInterval(() => {
+      if (!isAuthenticated) {
+        addFreeInterviewSecondsUsed(1);
+      }
       setTimeLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(id);
-  }, [sessionId, report, timerActive, timeLeft]);
+  }, [sessionId, report, timerActive, timeLeft, isAuthenticated]);
 
   useEffect(() => {
     if (!sessionId || report || !timerActive) return;
     if (timeLeft > 0 || timerEnding || loading) return;
+    if (!isAuthenticated && getFreeInterviewSecondsUsed() >= FREE_INTERVIEW_LIMIT_SECONDS) {
+      trackAiInterviewFreeLimitReached({
+        resume_uploaded: Boolean(resumeFile),
+        job_description_present: Boolean(jdFile),
+        target_company: company,
+        target_role: role,
+      });
+      setShowSignupPrompt(true);
+    }
     setTimerEnding(true);
     endInterviewEarly(true);
-  }, [timeLeft, sessionId, report, timerActive, timerEnding, loading]);
+  }, [
+    timeLeft,
+    sessionId,
+    report,
+    timerActive,
+    timerEnding,
+    loading,
+    isAuthenticated,
+    resumeFile,
+    jdFile,
+    company,
+    role,
+  ]);
 
   async function handleStart(e) {
     e.preventDefault();
@@ -150,6 +193,20 @@ export default function InterviewSimulator() {
     primeSpeechSynthesis();
     if (isMobileBrowser()) {
       void enableAudioAndMic();
+    }
+    if (
+      !isAuthenticated &&
+      (hasUsedFreeInterviewTrial() || getFreeInterviewSecondsUsed() >= FREE_INTERVIEW_LIMIT_SECONDS)
+    ) {
+      setShowSignupPrompt(true);
+      setApiError("Your free AI interview trial is used. Create a free account to continue practicing.");
+      trackAiInterviewFreeLimitReached({
+        resume_uploaded: Boolean(resumeFile),
+        job_description_present: Boolean(jdFile),
+        target_company: company,
+        target_role: role,
+      });
+      return;
     }
     if (!resumeFile) {
       setApiError("Resume is required to start interview.");
@@ -168,10 +225,19 @@ export default function InterviewSimulator() {
       const { data } = await api.post("/interviews/start", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
+
+      const remainingFreeSeconds = getRemainingFreeInterviewSeconds();
+      const initialTimeLeft = !isAuthenticated
+        ? Math.max(1, Math.min(durationMinutes * 60, remainingFreeSeconds))
+        : durationMinutes * 60;
+
       setSessionId(data.sessionId);
       setCurrentQuestion(data.question);
       setStage(data.stage || "technical");
-      setTimeLeft(durationMinutes * 60);
+      setTimeLeft(initialTimeLeft);
+      if (!isAuthenticated) {
+        markFreeInterviewTrialUsed();
+      }
       setTimerActive(true);
       setTimerEnding(false);
       setRating(0);
@@ -183,10 +249,18 @@ export default function InterviewSimulator() {
         role,
         duration_minutes: durationMinutes,
       });
+      if (!isAuthenticated) {
+        trackAiInterviewFreeStarted({
+          resume_uploaded: Boolean(resumeFile),
+          job_description_present: Boolean(jdFile),
+          target_company: company,
+          target_role: role,
+        });
+      }
       speakText(data.question);
       reset();
     } catch (err) {
-      setApiError(err.response?.data?.message || "Could not start interview");
+      setApiError(getApiErrorMessage(err, "Could not start interview"));
     } finally {
       setLoading(false);
     }
@@ -234,7 +308,7 @@ export default function InterviewSimulator() {
       reset();
       setTypedAnswer("");
     } catch (err) {
-      setApiError(err.response?.data?.message || "Failed to submit answer");
+      setApiError(getApiErrorMessage(err, "Failed to submit answer"));
     } finally {
       setLoading(false);
     }
@@ -267,7 +341,7 @@ export default function InterviewSimulator() {
         );
       }
     } catch (err) {
-      setApiError(err.response?.data?.message || "Failed to end interview");
+      setApiError(getApiErrorMessage(err, "Failed to end interview"));
     } finally {
       setTimerEnding(false);
       setLoading(false);
@@ -283,7 +357,7 @@ export default function InterviewSimulator() {
       setRatingSubmitted(true);
       setRatingMessage("Thanks! Your feedback was submitted.");
     } catch (err) {
-      setRatingMessage(err.response?.data?.message || "Failed to submit rating");
+      setRatingMessage(getApiErrorMessage(err, "Failed to submit rating"));
     } finally {
       setRatingLoading(false);
     }
@@ -318,22 +392,37 @@ export default function InterviewSimulator() {
   }
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="font-display text-3xl font-bold text-white">AI Interview Simulator</h1>
-        <p className="text-slate-400 mt-1 max-w-2xl">
-          The interviewer speaks questions aloud. Answer via microphone (Web Speech API). After each
-          answer you get feedback, then the next question — technical, behavioral, then HR.
-        </p>
+    <div className="-mx-4 sm:-mx-6 md:-mx-10 min-h-[calc(100vh-5rem)] bg-chromatic px-4 py-6 sm:px-6 md:px-10">
+      <div className="relative mx-auto w-full max-w-5xl overflow-hidden pb-14">
+      <div className="pointer-events-none absolute -top-16 -left-16 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute top-1/3 -right-20 h-64 w-64 rounded-full bg-fuchsia-500/18 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />
+
+      <div className="relative z-10 mb-6 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl md:text-3xl font-bold text-white">AI Interview Simulator</h1>
+            <p className="text-slate-300 mt-2 max-w-xl text-sm md:text-base">
+              Practice realistic company-specific interviews with voice flow, live feedback, and final
+              scoring.
+            </p>
+          </div>
+          {remainingFreeInterviewMinutes !== null && remainingFreeInterviewTrials !== null && (
+            <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs md:text-sm text-cyan-200">
+              Free trial left: <span className="font-semibold">{remainingFreeInterviewTrials}</span> · Time:
+              <span className="font-semibold"> ~{remainingFreeInterviewMinutes} min</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {!sessionId && (
         <form
           onSubmit={handleStart}
-          className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 mb-8 max-w-xl grid gap-4"
+          className="relative z-10 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 mb-8 max-w-2xl grid gap-4 sm:grid-cols-2 shadow-card"
         >
           {apiError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm px-3 py-2">
+            <div className="rounded-xl bg-red-500/10 border border-red-500/30 text-red-200 text-sm px-4 py-3 sm:col-span-2">
               {apiError}
             </div>
           )}
@@ -343,7 +432,7 @@ export default function InterviewSimulator() {
               required
               value={company}
               onChange={(e) => setCompany(e.target.value)}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+              className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white"
               placeholder="e.g. Google"
             />
           </div>
@@ -353,12 +442,12 @@ export default function InterviewSimulator() {
               required
               value={role}
               onChange={(e) => setRole(e.target.value)}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+              className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white"
               placeholder="e.g. SWE Intern"
             />
           </div>
 
-          <div>
+          <div className="sm:col-span-2">
             <label className="block text-xs text-slate-400 mb-1">
               Job Description (optional)
             </label>
@@ -372,7 +461,7 @@ export default function InterviewSimulator() {
               <p className="text-xs text-slate-500 mt-2">Selected: {jdFile.name}</p>
             )}
           </div>
-          <div>
+          <div className="sm:col-span-2">
             <label className="block text-xs text-slate-400 mb-1">Resume (required)</label>
             <input
               type="file"
@@ -391,7 +480,7 @@ export default function InterviewSimulator() {
             <select
               value={durationMinutes}
               onChange={(e) => setDurationMinutes(Number(e.target.value))}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+              className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white"
             >
               {TIMER_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -404,7 +493,7 @@ export default function InterviewSimulator() {
           <button
             type="submit"
             disabled={loading}
-            className="font-semibold bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white py-2.5 rounded-xl"
+            className="sm:col-span-2 font-semibold bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 disabled:opacity-50 text-white py-3 rounded-xl shadow-glow"
           >
             {loading ? "Starting…" : "Start voice interview"}
           </button>
@@ -413,7 +502,7 @@ export default function InterviewSimulator() {
 
       {sessionId && !report && (
         <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-900/40 min-h-[420px] flex flex-col">
+          <div className="lg:col-span-2 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm min-h-[380px] flex flex-col shadow-card">
             <div className="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
               <span className="text-xs uppercase tracking-wide text-slate-500">
                 Stage: <span className="text-brand-400">{stage}</span>
@@ -456,7 +545,7 @@ export default function InterviewSimulator() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 space-y-4 h-fit">
+          <div className="rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-4 space-y-4 h-fit shadow-card">
             <h3 className="font-display font-semibold text-white">Your answer</h3>
             {!supported && (
               <p className="text-xs text-amber-400">
@@ -472,7 +561,7 @@ export default function InterviewSimulator() {
               </p>
             )}
 
-            <div className="rounded-lg bg-slate-950 border border-slate-700 min-h-[100px] p-3 text-sm text-slate-300">
+            <div className="rounded-lg bg-slate-900/80 border border-slate-600/80 min-h-[100px] p-3 text-sm text-slate-300">
               {transcript || (listening ? "Listening…" : "Press start and speak your answer.")}
             </div>
             <label className="block text-xs text-slate-500 mt-3">Or type your answer</label>
@@ -480,7 +569,7 @@ export default function InterviewSimulator() {
               value={typedAnswer}
               onChange={(e) => setTypedAnswer(e.target.value)}
               rows={3}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600"
+              className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white placeholder:text-slate-500"
               placeholder="Fallback if microphone is unavailable"
             />
 
@@ -507,7 +596,7 @@ export default function InterviewSimulator() {
                 type="button"
                 onClick={submitAnswer}
                 disabled={loading || !currentQuestion}
-                className="font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
+                className="font-medium bg-gradient-to-r from-cyan-500 to-brand-500 hover:from-cyan-400 hover:to-brand-400 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm"
               >
                 {loading ? "Sending…" : "Submit answer"}
               </button>
@@ -614,6 +703,9 @@ export default function InterviewSimulator() {
           </button>
         </div>
       )}
+
+      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} />
+      </div>
     </div>
   );
 }

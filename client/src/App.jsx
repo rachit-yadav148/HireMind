@@ -34,6 +34,8 @@ export default function App() {
       <PostHogPageviewTracker />
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/resume" element={<ResumeAnalyzer />} />
+        <Route path="/interview" element={<InterviewSimulator />} />
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />

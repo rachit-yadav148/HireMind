@@ -88,22 +88,25 @@ export async function analyzeResumeUpload(req, res) {
 
     const analysis = await gemini.analyzeResume(resumeText, jobContextText);
 
-    const resume = await Resume.create({
-      userId: req.userId,
-      resumeText: resumeText.slice(0, 100000),
-      atsScore: analysis.atsScore,
-      suggestions: {
-        weaknesses: analysis.weaknesses,
-        bulletImprovements: analysis.bulletImprovements,
-        missingSkills: analysis.missingSkills,
-        suggestions: analysis.suggestions,
-      },
-    });
+    let resume = null;
+    if (req.userId) {
+      resume = await Resume.create({
+        userId: req.userId,
+        resumeText: resumeText.slice(0, 100000),
+        atsScore: analysis.atsScore,
+        suggestions: {
+          weaknesses: analysis.weaknesses,
+          bulletImprovements: analysis.bulletImprovements,
+          missingSkills: analysis.missingSkills,
+          suggestions: analysis.suggestions,
+        },
+      });
 
-    await User.findByIdAndUpdate(req.userId, { $push: { resumes: resume._id } });
+      await User.findByIdAndUpdate(req.userId, { $push: { resumes: resume._id } });
+    }
 
     res.json({
-      resumeId: resume._id,
+      resumeId: resume?._id || null,
       atsScore: analysis.atsScore,
       weaknesses: analysis.weaknesses,
       bulletImprovements: analysis.bulletImprovements,

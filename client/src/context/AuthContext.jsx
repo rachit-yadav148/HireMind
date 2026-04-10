@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken, getToken } from "../services/api";
 import posthog from "../posthog";
+import { getFreeInterviewSecondsUsed, getFreeResumeAnalysisUsed, shouldTrackUserSignedUpAfterTryingFree } from "../utils/freeTrial";
+import { trackUserSignedUpAfterTryingFree } from "../utils/tryFreeAnalytics";
 
 const AuthContext = createContext(null);
 
@@ -53,6 +55,12 @@ export function AuthProvider({ children }) {
       setAuthToken(data.token);
       setUser(data.user);
       identifyUser(data.user);
+      if (shouldTrackUserSignedUpAfterTryingFree()) {
+        trackUserSignedUpAfterTryingFree({
+          free_resume_analysis_used: getFreeResumeAnalysisUsed(),
+          free_interview_seconds_used: getFreeInterviewSecondsUsed(),
+        });
+      }
     }
     return data;
   };
@@ -62,6 +70,12 @@ export function AuthProvider({ children }) {
     setAuthToken(data.token);
     setUser(data.user);
     identifyUser(data.user);
+    if (shouldTrackUserSignedUpAfterTryingFree()) {
+      trackUserSignedUpAfterTryingFree({
+        free_resume_analysis_used: getFreeResumeAnalysisUsed(),
+        free_interview_seconds_used: getFreeInterviewSecondsUsed(),
+      });
+    }
     return data;
   };
 

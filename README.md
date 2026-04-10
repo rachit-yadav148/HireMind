@@ -74,6 +74,77 @@ Serve `client/dist` as static files (e.g. nginx) or use a host that serves the S
 - `GET|POST|PATCH|DELETE /api/applications` …
 - `GET /api/analytics`
 
+## PostHog: free-trial dashboard setup
+
+Use these events to track who tried free features, who completed them, and who converted to signup.
+
+### Events already captured
+
+- `resume_analysis_try_free_clicked`
+- `ai_interview_try_free_clicked`
+- `resume_analysis_free_completed`
+- `ai_interview_free_started`
+- `ai_interview_free_limit_reached`
+- `user_signed_up_after_trying_free`
+
+Common properties:
+
+- `source` (`landing_page_try_free`)
+- `resume_uploaded` (boolean)
+- `job_description_present` (boolean)
+- `target_company` (string)
+- `target_role` (string)
+
+### Funnel 1: Resume try → complete → signup
+
+Create a **Funnel insight** in PostHog:
+
+1. Step 1: `resume_analysis_try_free_clicked`
+2. Step 2: `resume_analysis_free_completed`
+3. Step 3: `user_signed_up_after_trying_free`
+
+Recommended settings:
+
+- Conversion window: `7 days`
+- Filter: `source = landing_page_try_free`
+- Breakdown: `job_description_present`
+
+### Funnel 2: Interview try → started → limit reached → signup
+
+Create another **Funnel insight**:
+
+1. Step 1: `ai_interview_try_free_clicked`
+2. Step 2: `ai_interview_free_started`
+3. Step 3: `ai_interview_free_limit_reached`
+4. Step 4: `user_signed_up_after_trying_free`
+
+Recommended settings:
+
+- Conversion window: `7 days`
+- Filter: `source = landing_page_try_free`
+- Breakdown: `target_role`
+
+### Trend insights for dashboard
+
+Add these **Trends** to the same dashboard:
+
+- Daily count of `resume_analysis_try_free_clicked`
+- Daily count of `resume_analysis_free_completed`
+- Daily count of `ai_interview_try_free_clicked`
+- Daily count of `ai_interview_free_started`
+- Daily count of `user_signed_up_after_trying_free`
+
+Recommended dashboard title: `Try Free Conversion`.
+
+### Who tried free but did not sign up yet
+
+In PostHog, create a **Cohort**:
+
+- Include users who did `resume_analysis_try_free_clicked` OR `ai_interview_try_free_clicked`
+- Exclude users who did `user_signed_up_after_trying_free`
+
+This gives a re-targetable audience of free-trial users who have not converted.
+
 ## Voice interview
 
 Use **Chrome** or **Edge** for best Web Speech API support. The interviewer’s questions are read with **speech synthesis**; you answer with the microphone (or type in the fallback box). HTTPS may be required for microphone access when not on `localhost`.

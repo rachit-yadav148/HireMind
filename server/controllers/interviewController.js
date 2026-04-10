@@ -65,8 +65,16 @@ function normalizeQuestion(raw) {
 }
 
 async function getResumeSnippet(userId) {
+  if (!userId) return "";
   const r = await ResumeModel.findOne({ userId }).sort({ createdAt: -1 });
   return r?.resumeText || "";
+}
+
+function getSessionAccessQuery(sessionId, userId) {
+  if (userId) {
+    return { _id: sessionId, userId };
+  }
+  return { _id: sessionId, userId: null };
 }
 
 async function extractTextFromPdfOrImage(file) {
@@ -85,6 +93,20 @@ function unlinkQuiet(p) {
   } catch {
     /* ignore */
   }
+}
+
+function hasMeaningfulAnswer(transcript = []) {
+  return transcript.some((entry) => String(entry?.answer || "").trim().length > 0);
+}
+
+function buildNoAnswerReport() {
+  return {
+    interviewScore: 0,
+    communicationScore: 0,
+    technicalDepth: 0,
+    confidenceScore: 0,
+    suggestions: ["No valid answers were submitted. Submit at least one complete answer to receive a score."],
+  };
 }
 
 export async function startInterview(req, res) {
@@ -123,7 +145,7 @@ export async function startInterview(req, res) {
     );
 
     const session = await InterviewSession.create({
-      userId: req.userId,
+      userId: req.userId || null,
       company: company.trim(),
       role: role.trim(),
       jobContext: jdText,
@@ -156,10 +178,7 @@ export async function submitAnswer(req, res) {
       return res.status(400).json({ message: "sessionId and question are required" });
     }
 
-    const session = await InterviewSession.findOne({
-      _id: sessionId,
-      userId: req.userId,
-    });
+    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId));
     if (!session) {
       return res.status(404).json({ message: "Session not found" });
     }
@@ -187,11 +206,13 @@ export async function submitAnswer(req, res) {
 
     const answeredCount = session.transcript.length;
     if (answeredCount >= TOTAL_QUESTIONS) {
-      const report = await gemini.generateInterviewReport(session.transcript, {
-        company: session.company,
-        role: session.role,
-        jobContextSnippet: session.jobContext || "",
-      });
+      const report = hasMeaningfulAnswer(session.transcript)
+        ? await gemini.generateInterviewReport(session.transcript, {
+            company: session.company,
+            role: session.role,
+            jobContextSnippet: session.jobContext || "",
+          })
+        : buildNoAnswerReport();
       session.feedback = report;
       session.score = {
         interviewScore: report.interviewScore,
@@ -252,10 +273,7 @@ export async function endInterview(req, res) {
     if (!sessionId) {
       return res.status(400).json({ message: "sessionId is required" });
     }
-    const session = await InterviewSession.findOne({
-      _id: sessionId,
-      userId: req.userId,
-    });
+    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId));
     if (!session) return res.status(404).json({ message: "Session not found" });
 
     if (session.status === "completed" && session.feedback) {
@@ -279,11 +297,13 @@ export async function endInterview(req, res) {
       });
     }
 
-    const report = await gemini.generateInterviewReport(session.transcript, {
-      company: session.company,
-      role: session.role,
-      jobContextSnippet: session.jobContext || "",
-    });
+    const report = hasMeaningfulAnswer(session.transcript)
+      ? await gemini.generateInterviewReport(session.transcript, {
+          company: session.company,
+          role: session.role,
+          jobContextSnippet: session.jobContext || "",
+        })
+      : buildNoAnswerReport();
 
     session.feedback = report;
     session.score = {

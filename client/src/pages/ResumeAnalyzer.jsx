@@ -1,10 +1,19 @@
 import { useMemo, useRef, useState } from "react";
-import { api } from "../services/api";
+import { api, getApiErrorMessage } from "../services/api";
 import posthog from "../posthog";
+import { useAuth } from "../context/AuthContext";
+import SignupPromptModal from "../components/SignupPromptModal";
+import {
+  FREE_RESUME_ANALYSIS_LIMIT,
+  getFreeResumeAnalysisUsed,
+  markFreeResumeAnalysisUsed,
+} from "../utils/freeTrial";
+import { trackResumeAnalysisFreeCompleted } from "../utils/tryFreeAnalytics";
 
 const EMPLOYMENT_TYPES = ["Full-time", "Internship", "Contract", "Part-time"];
 
 export default function ResumeAnalyzer() {
+  const { isAuthenticated } = useAuth();
   const resumeInputRef = useRef(null);
   const jdInputRef = useRef(null);
 
@@ -24,6 +33,7 @@ export default function ResumeAnalyzer() {
   const [activeSection, setActiveSection] = useState("suggestions");
   const [resumeId, setResumeId] = useState(null);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [showSignupPrompt, setShowSignupPrompt] = useState(false);
 
   function buildFormData() {
     const fd = new FormData();
@@ -45,6 +55,11 @@ export default function ResumeAnalyzer() {
       setError("Choose a PDF resume");
       return;
     }
+    if (!isAuthenticated && getFreeResumeAnalysisUsed() >= FREE_RESUME_ANALYSIS_LIMIT) {
+      setShowSignupPrompt(true);
+      setError("Create a free account to continue practicing with HireMind");
+      return;
+    }
     setError("");
     setLoading(true);
     setResult(null);
@@ -60,8 +75,18 @@ export default function ResumeAnalyzer() {
         file_type: extension || "unknown",
       });
       posthog.capture("resume_analysis_generated");
+
+      if (!isAuthenticated) {
+        markFreeResumeAnalysisUsed();
+        trackResumeAnalysisFreeCompleted({
+          resume_uploaded: true,
+          job_description_present: Boolean(jdFile),
+          target_company: companyName || "",
+          target_role: jobTitle || "",
+        });
+      }
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "Analysis failed");
+      setError(getApiErrorMessage(err, "Resume analysis failed"));
     } finally {
       setLoading(false);
     }
@@ -90,24 +115,43 @@ export default function ResumeAnalyzer() {
       ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
       : "text-red-300 border-red-500/30 bg-red-500/10";
 
+  const remainingFreeAnalyses = !isAuthenticated
+    ? Math.max(0, FREE_RESUME_ANALYSIS_LIMIT - getFreeResumeAnalysisUsed())
+    : null;
+
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="font-display text-3xl font-bold text-white">Resume Analyzer</h1>
-        <p className="text-slate-400 mt-1">
-          Upload a PDF. We extract text, score ATS fit, and suggest improvements via HireMind AI.
-        </p>
+    <div className="-mx-4 sm:-mx-6 md:-mx-10 min-h-[calc(100vh-5rem)] bg-chromatic px-4 py-6 sm:px-6 md:px-10">
+      <div className="relative mx-auto w-full max-w-5xl overflow-hidden pb-14">
+        <div className="pointer-events-none absolute -top-14 -left-14 h-56 w-56 rounded-full bg-cyan-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute top-1/3 -right-16 h-60 w-60 rounded-full bg-fuchsia-500/18 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />
+
+      <div className="relative z-10 mb-6 rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl md:text-3xl font-bold text-white">Resume Analyzer</h1>
+            <p className="text-slate-300 mt-2 max-w-xl text-sm md:text-base">
+              Get ATS score, improvement suggestions, and role-specific fixes from your resume in under a
+              minute.
+            </p>
+          </div>
+          {remainingFreeAnalyses !== null && (
+            <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-200">
+              Free analyses left: <span className="font-semibold">{remainingFreeAnalyses}</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      <form onSubmit={handleAnalyze} className="space-y-8 max-w-3xl">
+      <form onSubmit={handleAnalyze} className="relative z-10 space-y-5">
         {error && (
-          <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm px-3 py-2">
+          <div className="rounded-xl bg-red-500/10 border border-red-500/30 text-red-200 text-sm px-4 py-3">
             {error}
           </div>
         )}
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
-          <h2 className="text-sm font-semibold text-slate-200 mb-3">Your resume</h2>
+        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 shadow-card">
+          <h2 className="text-base font-semibold text-slate-100 mb-3">Upload your resume</h2>
           <input
             ref={resumeInputRef}
             type="file"
@@ -119,7 +163,7 @@ export default function ResumeAnalyzer() {
             <button
               type="button"
               onClick={() => resumeInputRef.current?.click()}
-              className="font-semibold bg-brand-500 hover:bg-brand-400 text-white px-5 py-2.5 rounded-xl transition-colors"
+              className="font-semibold bg-gradient-to-r from-cyan-500 to-brand-500 hover:from-cyan-400 hover:to-brand-400 text-white px-5 py-2.5 rounded-xl transition-colors"
             >
               Choose resume (PDF)
             </button>
@@ -129,11 +173,10 @@ export default function ResumeAnalyzer() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 space-y-5">
+        <div className="rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm p-5 md:p-6 space-y-4 shadow-card">
           <div>
             <h2 className="text-base font-display font-semibold text-white leading-snug">
-              For better resume correction suggestions and more optimal ATS Score on the basis of Job
-              Description, fill these fields too.
+              Improve match quality with job context
             </h2>
             <p className="text-xs text-slate-500 mt-2">
               All fields are optional. You can paste a job description below, upload a JD as PDF or
@@ -147,7 +190,7 @@ export default function ResumeAnalyzer() {
               <input
                 value={jobTitle}
                 onChange={(e) => setJobTitle(e.target.value)}
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600"
+                className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white placeholder:text-slate-500"
                 placeholder="Optional"
               />
             </div>
@@ -156,7 +199,7 @@ export default function ResumeAnalyzer() {
               <select
                 value={employmentType}
                 onChange={(e) => setEmploymentType(e.target.value)}
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+                className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white"
               >
                 <option value="">Select (optional)</option>
                 {EMPLOYMENT_TYPES.map((t) => (
@@ -171,7 +214,7 @@ export default function ResumeAnalyzer() {
               <input
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600"
+                className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white placeholder:text-slate-500"
                 placeholder="Optional"
               />
             </div>
@@ -181,7 +224,7 @@ export default function ResumeAnalyzer() {
                 value={jobSummary}
                 onChange={(e) => setJobSummary(e.target.value)}
                 rows={3}
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600 resize-y min-h-[80px]"
+                className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white placeholder:text-slate-500 resize-y min-h-[80px]"
                 placeholder="Optional"
               />
             </div>
@@ -191,7 +234,7 @@ export default function ResumeAnalyzer() {
                 value={keyResponsibilities}
                 onChange={(e) => setKeyResponsibilities(e.target.value)}
                 rows={4}
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600 resize-y min-h-[96px]"
+                className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white placeholder:text-slate-500 resize-y min-h-[96px]"
                 placeholder="Optional"
               />
             </div>
@@ -201,14 +244,14 @@ export default function ResumeAnalyzer() {
                 value={requiredSkills}
                 onChange={(e) => setRequiredSkills(e.target.value)}
                 rows={3}
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600 resize-y min-h-[80px]"
+                className="w-full rounded-lg bg-slate-900/80 border border-slate-600/80 px-3 py-2 text-sm text-white placeholder:text-slate-500 resize-y min-h-[80px]"
                 placeholder="Optional — e.g. Python, SQL, communication"
               />
             </div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
+        <div className="rounded-3xl border border-slate-700/70 bg-slate-900/50 p-5 md:p-6 shadow-card">
           <h2 className="text-sm font-semibold text-slate-200 mb-1">Job Description</h2>
           <p className="text-xs text-slate-500 mb-3">
             Upload the job posting as PDF or image (JPEG, PNG, WebP, GIF). Optional.
@@ -224,7 +267,7 @@ export default function ResumeAnalyzer() {
             <button
               type="button"
               onClick={() => jdInputRef.current?.click()}
-              className="font-semibold bg-brand-500 hover:bg-brand-400 text-white px-5 py-2.5 rounded-xl transition-colors"
+              className="font-semibold border border-slate-600 text-slate-200 hover:bg-slate-800/80 px-5 py-2.5 rounded-xl transition-colors"
             >
               Choose job description file
             </button>
@@ -237,14 +280,14 @@ export default function ResumeAnalyzer() {
         <button
           type="submit"
           disabled={loading || !resumeFile}
-          className="font-semibold bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-xl"
+          className="w-full md:w-auto font-semibold bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl shadow-glow"
         >
           {loading ? "Analyzing…" : "Analyze resume"}
         </button>
       </form>
 
       {loading && (
-        <div className="mt-6 flex items-center gap-3 text-slate-400 text-sm">
+        <div className="mt-6 inline-flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-slate-300 text-sm">
           <div className="h-5 w-5 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
           HireMind AI is reviewing your resume…
         </div>
@@ -338,6 +381,9 @@ export default function ResumeAnalyzer() {
           </div>
         </div>
       )}
+
+      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} />
+      </div>
     </div>
   );
 }
@@ -345,7 +391,7 @@ export default function ResumeAnalyzer() {
 function Card({ title, items, accent, active }) {
   return (
     <div
-      className={`rounded-2xl border ${accent} bg-slate-900/40 p-6 transition-all ${
+      className={`rounded-2xl border ${accent} bg-slate-900/35 backdrop-blur-sm p-6 transition-all ${
         active ? "ring-1 ring-brand-400/30 shadow-glow" : ""
       }`}
     >
@@ -362,7 +408,7 @@ function Card({ title, items, accent, active }) {
           return (
             <details
               key={i}
-              className="group rounded-xl border border-slate-800 bg-slate-950/40 open:bg-slate-900/70"
+              className="group rounded-xl border border-slate-700/80 bg-slate-900/50 open:bg-slate-900/75"
             >
               <summary className="cursor-pointer list-none px-4 py-3 flex items-start gap-3">
                 <span className="text-brand-400 shrink-0 mt-1 text-lg leading-none">•</span>

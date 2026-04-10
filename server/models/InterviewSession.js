@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const interviewSessionSchema = new mongoose.Schema(
   {
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false, default: null },
     company: { type: String, required: true, trim: true },
     role: { type: String, required: true, trim: true },
     jobContext: { type: String, default: "" }, // Optional JD text to tailor interview questions/feedback

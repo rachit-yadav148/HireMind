@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { trackAiInterviewTryFreeClicked, trackResumeAnalysisTryFreeClicked } from "../utils/tryFreeAnalytics";
 
 export default function Landing() {
   return (
@@ -38,24 +39,26 @@ export default function Landing() {
             AI-powered career prep
           </p>
           <h1 className="font-display text-4xl md:text-5xl lg:text-6xl font-bold text-white leading-tight">
-            Prepare for internships &amp; jobs with confidence
+            Practice Real Interviews With AI
           </h1>
           <p className="mt-6 text-lg text-slate-400 leading-relaxed">
-            HireMind analyzes your resume, runs voice mock interviews, generates targeted question banks,
-            and tracks every application — powered by advanced AI.
+            Analyze your resume against real job descriptions and practice AI-powered mock interviews
+            tailored to your target company and role.
           </p>
           <div className="mt-10 flex flex-wrap gap-4">
             <Link
-              to="/register"
+              to="/resume"
+              onClick={trackResumeAnalysisTryFreeClicked}
               className="inline-flex items-center justify-center font-semibold bg-gradient-to-r from-brand-500 to-fuchsia-500 hover:from-brand-400 hover:to-fuchsia-400 text-white px-6 py-3 rounded-xl shadow-glow transition-colors"
             >
-              Create free account
+              Try Resume Analysis Free
             </Link>
             <Link
-              to="/login"
+              to="/interview"
+              onClick={trackAiInterviewTryFreeClicked}
               className="inline-flex items-center justify-center font-semibold border border-slate-600 text-slate-200 hover:bg-slate-800/80 px-6 py-3 rounded-xl transition-colors"
             >
-              Sign in
+              Try AI Interview Free
             </Link>
           </div>
         </div>
@@ -89,6 +92,7 @@ export default function Landing() {
           ))}
         </div>
       </section>
+
     </div>
   );
 }

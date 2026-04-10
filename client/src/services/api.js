@@ -1,6 +1,15 @@
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_PROXY || "/api";
+function resolveApiBaseUrl() {
+  const configured = String(import.meta.env.VITE_API_PROXY || "").trim();
+  if (!configured) return "/api";
+
+  const normalized = configured.replace(/\/+$/, "");
+  if (/\/api$/i.test(normalized)) return normalized;
+  return `${normalized}/api`;
+}
+
+const baseURL = resolveApiBaseUrl();
 
 export const api = axios.create({
   baseURL,
