@@ -16,12 +16,47 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const configuredClientOrigins = [
-  process.env.CLIENT_URL,
-  ...(process.env.CLIENT_URLS || "").split(","),
-]
+function normalizeOrigin(origin) {
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return null;
+  }
+}
+
+function originWithHostname(baseOrigin, nextHostname) {
+  try {
+    const u = new URL(baseOrigin);
+    u.hostname = nextHostname;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+function expandOriginVariants(origin) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return [];
+
+  const u = new URL(normalized);
+  const host = u.hostname;
+  const variants = new Set([normalized]);
+
+  if (host.startsWith("www.")) {
+    const nonWww = originWithHostname(normalized, host.slice(4));
+    if (nonWww) variants.add(nonWww);
+  } else if (host !== "localhost" && host !== "127.0.0.1") {
+    const withWww = originWithHostname(normalized, `www.${host}`);
+    if (withWww) variants.add(withWww);
+  }
+
+  return [...variants];
+}
+
+const configuredClientOrigins = [process.env.CLIENT_URL, ...(process.env.CLIENT_URLS || "").split(",")]
   .map((origin) => origin?.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .flatMap(expandOriginVariants);
 
 const allowedOrigins = new Set([
   "http://localhost:5173",
