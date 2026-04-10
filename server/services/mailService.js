@@ -16,7 +16,7 @@ function getResendConfig() {
 
 export function canSendMail() {
   const { host, port, user, pass } = getSmtpConfig();
-  return Boolean(host && port && user && pass);
+  return Boolean((host && port && user && pass) || canSendViaResend());
 }
 
 function canSendViaResend() {
