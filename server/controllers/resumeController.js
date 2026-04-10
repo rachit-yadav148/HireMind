@@ -2,7 +2,10 @@ import fs from "fs";
 import pdfParse from "pdf-parse";
 import User from "../models/User.js";
 import Resume from "../models/Resume.js";
+import FreeTrialUsage from "../models/FreeTrialUsage.js";
 import * as gemini from "../services/geminiService.js";
+
+const FREE_RESUME_ANALYSIS_LIMIT = 1;
 
 function buildManualJobContext(body) {
   const lines = [];
@@ -58,6 +61,26 @@ export async function analyzeResumeUpload(req, res) {
     if (!resumeFile) {
       return res.status(400).json({ message: "PDF resume file is required" });
     }
+
+    if (!req.userId) {
+      if (!req.trialId) {
+        return res.status(400).json({ message: "Trial identity missing. Refresh and try again." });
+      }
+
+      const usage = await FreeTrialUsage.findOneAndUpdate(
+        { trialId: req.trialId },
+        { $setOnInsert: { trialId: req.trialId }, $set: { lastSeenAt: new Date() } },
+        { upsert: true, new: true }
+      );
+
+      if ((usage?.resumeAnalysesUsed || 0) >= FREE_RESUME_ANALYSIS_LIMIT) {
+        return res.status(403).json({
+          message: "Free resume analysis limit reached. Create a free account to continue.",
+          code: "FREE_LIMIT_REACHED",
+        });
+      }
+    }
+
     if (jdFile) jdPath = jdFile.path;
 
     const buffer = fs.readFileSync(resumeFile.path);
@@ -103,6 +126,12 @@ export async function analyzeResumeUpload(req, res) {
       });
 
       await User.findByIdAndUpdate(req.userId, { $push: { resumes: resume._id } });
+    } else if (req.trialId) {
+      await FreeTrialUsage.findOneAndUpdate(
+        { trialId: req.trialId },
+        { $inc: { resumeAnalysesUsed: 1 }, $set: { lastSeenAt: new Date() } },
+        { upsert: true }
+      );
     }
 
     res.json({

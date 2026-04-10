@@ -2,9 +2,11 @@ import fs from "fs";
 import pdfParse from "pdf-parse";
 import InterviewSession from "../models/InterviewSession.js";
 import ResumeModel from "../models/Resume.js";
+import FreeTrialUsage from "../models/FreeTrialUsage.js";
 import * as gemini from "../services/geminiService.js";
 
 const TOTAL_QUESTIONS = 10;
+const FREE_INTERVIEW_LIMIT_SECONDS = 180;
 
 function getStageForQuestionNumber(questionNumber) {
   const pos = ((Math.max(1, Number(questionNumber)) - 1) % 10) + 1;
@@ -70,11 +72,14 @@ async function getResumeSnippet(userId) {
   return r?.resumeText || "";
 }
 
-function getSessionAccessQuery(sessionId, userId) {
+function getSessionAccessQuery(sessionId, userId, trialId) {
   if (userId) {
     return { _id: sessionId, userId };
   }
-  return { _id: sessionId, userId: null };
+  if (trialId) {
+    return { _id: sessionId, userId: null, trialId };
+  }
+  return { _id: sessionId, userId: null, trialId: null };
 }
 
 async function extractTextFromPdfOrImage(file) {
@@ -109,6 +114,32 @@ function buildNoAnswerReport() {
   };
 }
 
+async function upsertTrialUsage(trialId) {
+  if (!trialId) return null;
+  return FreeTrialUsage.findOneAndUpdate(
+    { trialId },
+    { $setOnInsert: { trialId }, $set: { lastSeenAt: new Date() } },
+    { upsert: true, new: true }
+  );
+}
+
+function getTrialSecondsUsedFromSession(session) {
+  if (!session?.trialMode || !session?.createdAt) return 0;
+  const elapsed = Math.floor((Date.now() - new Date(session.createdAt).getTime()) / 1000);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return 0;
+  return Math.min(FREE_INTERVIEW_LIMIT_SECONDS, elapsed);
+}
+
+async function syncTrialInterviewSeconds(trialId, session) {
+  if (!trialId || !session?.trialMode) return;
+  const secondsUsed = getTrialSecondsUsedFromSession(session);
+  await FreeTrialUsage.findOneAndUpdate(
+    { trialId },
+    { $max: { interviewSecondsUsed: secondsUsed }, $set: { lastSeenAt: new Date() } },
+    { upsert: true }
+  );
+}
+
 export async function startInterview(req, res) {
   try {
     const { company, role } = req.body;
@@ -121,6 +152,21 @@ export async function startInterview(req, res) {
     if (!resumeFile) {
       return res.status(400).json({ message: "Resume is required to start interview" });
     }
+
+    const isGuestTrial = !req.userId;
+    if (isGuestTrial) {
+      if (!req.trialId) {
+        return res.status(400).json({ message: "Trial identity missing. Refresh and try again." });
+      }
+      const usage = await upsertTrialUsage(req.trialId);
+      if (usage?.interviewTrialUsed) {
+        return res.status(403).json({
+          message: "Free AI interview trial already used. Create a free account to continue.",
+          code: "FREE_LIMIT_REACHED",
+        });
+      }
+    }
+
     const jdText = jdFile ? await extractTextFromPdfOrImage(jdFile) : "";
     const uploadedResumeText = resumeFile ? await extractTextFromPdfOrImage(resumeFile) : "";
     const storedResumeText = await getResumeSnippet(req.userId);
@@ -146,6 +192,9 @@ export async function startInterview(req, res) {
 
     const session = await InterviewSession.create({
       userId: req.userId || null,
+      trialId: isGuestTrial ? req.trialId : null,
+      trialMode: isGuestTrial,
+      trialExpiresAt: isGuestTrial ? new Date(Date.now() + FREE_INTERVIEW_LIMIT_SECONDS * 1000) : null,
       company: company.trim(),
       role: role.trim(),
       jobContext: jdText,
@@ -155,11 +204,26 @@ export async function startInterview(req, res) {
       status: "in_progress",
     });
 
+    if (isGuestTrial) {
+      await FreeTrialUsage.findOneAndUpdate(
+        { trialId: req.trialId },
+        {
+          $set: {
+            interviewTrialUsed: true,
+            interviewSecondsUsed: 0,
+            lastSeenAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    }
+
     res.json({
       sessionId: session._id,
       question: normalizeQuestion(first.question),
       stage: first.stage || firstStage,
       resumeAvailable: Boolean(resumeContextText),
+      trialLimitSeconds: isGuestTrial ? FREE_INTERVIEW_LIMIT_SECONDS : null,
     });
   } catch (err) {
     console.error(err);
@@ -178,12 +242,20 @@ export async function submitAnswer(req, res) {
       return res.status(400).json({ message: "sessionId and question are required" });
     }
 
-    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId));
+    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId, req.trialId));
     if (!session) {
       return res.status(404).json({ message: "Session not found" });
     }
     if (session.status === "completed") {
       return res.status(400).json({ message: "Interview already completed" });
+    }
+
+    if (session.trialMode && session.trialExpiresAt && Date.now() >= new Date(session.trialExpiresAt).getTime()) {
+      await syncTrialInterviewSeconds(session.trialId, session);
+      return res.status(403).json({
+        message: "Free AI interview time is over. Create a free account to continue.",
+        code: "FREE_LIMIT_REACHED",
+      });
     }
 
     const stage = session.currentStage;
@@ -255,6 +327,7 @@ export async function submitAnswer(req, res) {
       }
     );
     await session.save();
+    await syncTrialInterviewSeconds(session.trialId, session);
     return res.json({
       feedback: evaluation.feedback,
       completed: false,
@@ -273,7 +346,7 @@ export async function endInterview(req, res) {
     if (!sessionId) {
       return res.status(400).json({ message: "sessionId is required" });
     }
-    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId));
+    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId, req.trialId));
     if (!session) return res.status(404).json({ message: "Session not found" });
 
     if (session.status === "completed" && session.feedback) {
@@ -315,6 +388,7 @@ export async function endInterview(req, res) {
     };
     session.status = "completed";
     await session.save();
+    await syncTrialInterviewSeconds(session.trialId, session);
 
     return res.json({
       completed: true,
