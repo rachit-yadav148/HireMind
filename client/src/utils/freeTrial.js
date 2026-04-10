@@ -2,6 +2,7 @@ export const FREE_RESUME_ANALYSIS_KEY = "free_resume_analysis_used";
 export const FREE_INTERVIEW_SECONDS_KEY = "free_interview_seconds_used";
 export const FREE_INTERVIEW_TRIAL_USED_KEY = "free_interview_trial_used";
 export const FREE_TRIAL_SIGNUP_TRACKED_KEY = "user_signed_up_after_trying_free_tracked";
+export const FREE_TRIAL_ID_KEY = "hm_trial_id";
 
 export const FREE_RESUME_ANALYSIS_LIMIT = 1;
 export const FREE_INTERVIEW_LIMIT_SECONDS = 180;
@@ -9,6 +10,24 @@ export const FREE_INTERVIEW_LIMIT_SECONDS = 180;
 function getLocalStorage() {
   if (typeof window === "undefined") return null;
   return window.localStorage;
+}
+
+function createTrialId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `trial_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+}
+
+export function getOrCreateTrialId() {
+  const storage = getLocalStorage();
+  if (!storage) return "";
+  let id = String(storage.getItem(FREE_TRIAL_ID_KEY) || "").trim();
+  if (!id) {
+    id = createTrialId();
+    storage.setItem(FREE_TRIAL_ID_KEY, id);
+  }
+  return id;
 }
 
 function toSafeInt(value) {

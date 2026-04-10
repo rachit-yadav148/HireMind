@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getOrCreateTrialId } from "../utils/freeTrial";
 
 function resolveApiBaseUrl() {
   const configured = String(import.meta.env.VITE_API_PROXY || "").trim();
@@ -13,13 +14,18 @@ const baseURL = resolveApiBaseUrl();
 
 export const api = axios.create({
   baseURL,
+  withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
+  const trialId = getOrCreateTrialId();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (trialId) {
+    config.headers["x-trial-id"] = trialId;
   }
   return config;
 });

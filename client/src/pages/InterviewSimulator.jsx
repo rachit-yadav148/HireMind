@@ -73,16 +73,47 @@ export default function InterviewSimulator() {
   const [ttsError, setTtsError] = useState("");
   const [audioStatus, setAudioStatus] = useState("");
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+  const [trialStatus, setTrialStatus] = useState(null);
 
-  const remainingFreeInterviewSeconds = !isAuthenticated ? getRemainingFreeInterviewSeconds() : null;
+  const remainingFreeInterviewSeconds =
+    trialStatus?.mode === "guest"
+      ? Math.max(0, Number(trialStatus.interviewSecondsLeft ?? 0))
+      : !isAuthenticated
+      ? getRemainingFreeInterviewSeconds()
+      : null;
   const remainingFreeInterviewMinutes =
     remainingFreeInterviewSeconds !== null ? Math.ceil(remainingFreeInterviewSeconds / 60) : null;
-  const remainingFreeInterviewTrials = !isAuthenticated ? getRemainingFreeInterviewTrials() : null;
+  const remainingFreeInterviewTrials =
+    trialStatus?.mode === "guest"
+      ? Math.max(0, Number(trialStatus.interviewTrialsLeft ?? 0))
+      : !isAuthenticated
+      ? getRemainingFreeInterviewTrials()
+      : null;
 
   const { supported, listening, transcript, error: speechErr, start, stop, reset } =
     useSpeechRecognition();
 
   const [typedAnswer, setTypedAnswer] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTrialStatus() {
+      try {
+        const { data } = await api.get("/trial/status");
+        if (!active) return;
+        setTrialStatus(data || null);
+      } catch {
+        if (!active) return;
+        setTrialStatus(null);
+      }
+    }
+
+    loadTrialStatus();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const isMobileBrowser = useCallback(() => {
     if (typeof window === "undefined") return false;
@@ -196,7 +227,9 @@ export default function InterviewSimulator() {
     }
     if (
       !isAuthenticated &&
-      (hasUsedFreeInterviewTrial() || getFreeInterviewSecondsUsed() >= FREE_INTERVIEW_LIMIT_SECONDS)
+      ((trialStatus?.mode === "guest" && Number(trialStatus.interviewTrialsLeft ?? 0) <= 0) ||
+        hasUsedFreeInterviewTrial() ||
+        getFreeInterviewSecondsUsed() >= FREE_INTERVIEW_LIMIT_SECONDS)
     ) {
       setShowSignupPrompt(true);
       setApiError("Your free AI interview trial is used. Create a free account to continue practicing.");
@@ -226,7 +259,10 @@ export default function InterviewSimulator() {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      const remainingFreeSeconds = getRemainingFreeInterviewSeconds();
+      const remainingFreeSeconds =
+        trialStatus?.mode === "guest"
+          ? Math.max(0, Number(trialStatus.interviewSecondsLeft ?? 0))
+          : getRemainingFreeInterviewSeconds();
       const initialTimeLeft = !isAuthenticated
         ? Math.max(1, Math.min(durationMinutes * 60, remainingFreeSeconds))
         : durationMinutes * 60;
@@ -237,6 +273,12 @@ export default function InterviewSimulator() {
       setTimeLeft(initialTimeLeft);
       if (!isAuthenticated) {
         markFreeInterviewTrialUsed();
+        try {
+          const { data: status } = await api.get("/trial/status");
+          setTrialStatus(status || null);
+        } catch {
+          /* noop */
+        }
       }
       setTimerActive(true);
       setTimerEnding(false);
@@ -261,6 +303,15 @@ export default function InterviewSimulator() {
       reset();
     } catch (err) {
       setApiError(getApiErrorMessage(err, "Could not start interview"));
+      if (err?.response?.data?.code === "FREE_LIMIT_REACHED") {
+        setShowSignupPrompt(true);
+        try {
+          const { data: status } = await api.get("/trial/status");
+          setTrialStatus(status || null);
+        } catch {
+          /* noop */
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -309,6 +360,9 @@ export default function InterviewSimulator() {
       setTypedAnswer("");
     } catch (err) {
       setApiError(getApiErrorMessage(err, "Failed to submit answer"));
+      if (err?.response?.data?.code === "FREE_LIMIT_REACHED") {
+        setShowSignupPrompt(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -342,6 +396,9 @@ export default function InterviewSimulator() {
       }
     } catch (err) {
       setApiError(getApiErrorMessage(err, "Failed to end interview"));
+      if (err?.response?.data?.code === "FREE_LIMIT_REACHED") {
+        setShowSignupPrompt(true);
+      }
     } finally {
       setTimerEnding(false);
       setLoading(false);
@@ -411,6 +468,11 @@ export default function InterviewSimulator() {
             <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs md:text-sm text-cyan-200">
               Free trial left: <span className="font-semibold">{remainingFreeInterviewTrials}</span> · Time:
               <span className="font-semibold"> ~{remainingFreeInterviewMinutes} min</span>
+            </div>
+          )}
+          {remainingFreeInterviewMinutes === null && isAuthenticated && (
+            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs md:text-sm text-emerald-200">
+              Signed in: free trial counters are hidden
             </div>
           )}
         </div>

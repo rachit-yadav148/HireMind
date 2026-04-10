@@ -39,7 +39,8 @@ export function ensureTrialIdentity(req, res, next) {
   }
 
   const cookies = parseCookieHeader(req.headers.cookie);
-  let trialId = cookies[TRIAL_COOKIE_NAME];
+  const headerTrialId = req.headers["x-trial-id"];
+  let trialId = typeof headerTrialId === "string" ? headerTrialId.trim() : cookies[TRIAL_COOKIE_NAME];
 
   if (!isValidTrialId(trialId)) {
     trialId = crypto.randomUUID();
@@ -48,9 +49,10 @@ export function ensureTrialIdentity(req, res, next) {
   req.trialId = trialId;
 
   const shouldUseSecureCookie = process.env.NODE_ENV === "production";
+  const sameSite = shouldUseSecureCookie ? "None" : "Lax";
   const cookie = serializeCookie(TRIAL_COOKIE_NAME, trialId, {
     httpOnly: true,
-    sameSite: "Lax",
+    sameSite,
     secure: shouldUseSecureCookie,
     maxAge: ONE_YEAR_SECONDS,
     path: "/",

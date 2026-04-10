@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../services/api";
 import posthog from "../posthog";
 import { useAuth } from "../context/AuthContext";
@@ -34,6 +34,27 @@ export default function ResumeAnalyzer() {
   const [resumeId, setResumeId] = useState(null);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+  const [trialStatus, setTrialStatus] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTrialStatus() {
+      try {
+        const { data } = await api.get("/trial/status");
+        if (!active) return;
+        setTrialStatus(data || null);
+      } catch {
+        if (!active) return;
+        setTrialStatus(null);
+      }
+    }
+
+    loadTrialStatus();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function buildFormData() {
     const fd = new FormData();
@@ -55,7 +76,14 @@ export default function ResumeAnalyzer() {
       setError("Choose a PDF resume");
       return;
     }
-    if (!isAuthenticated && getFreeResumeAnalysisUsed() >= FREE_RESUME_ANALYSIS_LIMIT) {
+    const remainingFromServer =
+      trialStatus?.mode === "guest" ? Number(trialStatus.resumeAnalysesLeft ?? 0) : null;
+    if (!isAuthenticated && remainingFromServer !== null && remainingFromServer <= 0) {
+      setShowSignupPrompt(true);
+      setError("Create a free account to continue practicing with HireMind");
+      return;
+    }
+    if (!isAuthenticated && remainingFromServer === null && getFreeResumeAnalysisUsed() >= FREE_RESUME_ANALYSIS_LIMIT) {
       setShowSignupPrompt(true);
       setError("Create a free account to continue practicing with HireMind");
       return;
@@ -84,9 +112,19 @@ export default function ResumeAnalyzer() {
           target_company: companyName || "",
           target_role: jobTitle || "",
         });
+
+        try {
+          const { data: status } = await api.get("/trial/status");
+          setTrialStatus(status || null);
+        } catch {
+          /* noop */
+        }
       }
     } catch (err) {
       setError(getApiErrorMessage(err, "Resume analysis failed"));
+      if (err?.response?.data?.code === "FREE_LIMIT_REACHED") {
+        setShowSignupPrompt(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -115,9 +153,12 @@ export default function ResumeAnalyzer() {
       ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
       : "text-red-300 border-red-500/30 bg-red-500/10";
 
-  const remainingFreeAnalyses = !isAuthenticated
-    ? Math.max(0, FREE_RESUME_ANALYSIS_LIMIT - getFreeResumeAnalysisUsed())
-    : null;
+  const remainingFreeAnalyses =
+    trialStatus?.mode === "guest"
+      ? Math.max(0, Number(trialStatus.resumeAnalysesLeft ?? 0))
+      : !isAuthenticated
+      ? Math.max(0, FREE_RESUME_ANALYSIS_LIMIT - getFreeResumeAnalysisUsed())
+      : null;
 
   return (
     <div className="-mx-4 sm:-mx-6 md:-mx-10 min-h-[calc(100vh-5rem)] bg-chromatic px-4 py-6 sm:px-6 md:px-10">
@@ -138,6 +179,11 @@ export default function ResumeAnalyzer() {
           {remainingFreeAnalyses !== null && (
             <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-200">
               Free analyses left: <span className="font-semibold">{remainingFreeAnalyses}</span>
+            </div>
+          )}
+          {remainingFreeAnalyses === null && isAuthenticated && (
+            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
+              Signed in: free trial counters are hidden
             </div>
           )}
         </div>
