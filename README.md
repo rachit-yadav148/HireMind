@@ -87,4 +87,4 @@ client/   — React app (`components/`, `pages/`, `services/`, `hooks/`)
 
 ## License
 
-MIT (adjust as needed for your product).
+**rachit-yadav148**
