@@ -6,6 +6,15 @@ import FreeTrialUsage from "../models/FreeTrialUsage.js";
 import * as gemini from "../services/geminiService.js";
 
 const FREE_RESUME_ANALYSIS_LIMIT = 1;
+const RESUME_TRIAL_COOLDOWN_SECONDS = Math.max(10, Number(process.env.TRIAL_RESUME_COOLDOWN_SECONDS || 45));
+
+function getSecondsRemainingFromTimestamp(dateValue, cooldownSeconds) {
+  if (!dateValue) return 0;
+  const last = new Date(dateValue).getTime();
+  if (!Number.isFinite(last)) return 0;
+  const elapsed = Math.floor((Date.now() - last) / 1000);
+  return Math.max(0, cooldownSeconds - Math.max(0, elapsed));
+}
 
 function buildManualJobContext(body) {
   const lines = [];
@@ -79,6 +88,18 @@ export async function analyzeResumeUpload(req, res) {
           code: "FREE_LIMIT_REACHED",
         });
       }
+
+      const retryAfterSeconds = getSecondsRemainingFromTimestamp(
+        usage?.resumeLastAttemptAt,
+        RESUME_TRIAL_COOLDOWN_SECONDS
+      );
+      if (retryAfterSeconds > 0) {
+        return res.status(429).json({
+          message: `Please wait ${retryAfterSeconds}s before trying again.`,
+          code: "TRIAL_RATE_LIMIT",
+          retryAfterSeconds,
+        });
+      }
     }
 
     if (jdFile) jdPath = jdFile.path;
@@ -129,7 +150,10 @@ export async function analyzeResumeUpload(req, res) {
     } else if (req.trialId) {
       await FreeTrialUsage.findOneAndUpdate(
         { trialId: req.trialId },
-        { $inc: { resumeAnalysesUsed: 1 }, $set: { lastSeenAt: new Date() } },
+        {
+          $inc: { resumeAnalysesUsed: 1 },
+          $set: { lastSeenAt: new Date(), resumeLastAttemptAt: new Date() },
+        },
         { upsert: true }
       );
     }

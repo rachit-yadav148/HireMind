@@ -3,6 +3,39 @@ import crypto from "crypto";
 const TRIAL_COOKIE_NAME = "hm_trial_id";
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
+function getClientIp(req) {
+  const forwardedFor = req.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    const first = forwardedFor.split(",")[0]?.trim();
+    if (first) return first;
+  }
+
+  const realIp = req.headers["x-real-ip"];
+  if (typeof realIp === "string" && realIp.trim()) {
+    return realIp.trim();
+  }
+
+  if (typeof req.ip === "string" && req.ip.trim()) {
+    return req.ip.trim();
+  }
+
+  return "";
+}
+
+function getClientUserAgent(req) {
+  const ua = req.headers["user-agent"];
+  if (typeof ua !== "string") return "";
+  return ua.replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
+function createFingerprintTrialId(ip, userAgent) {
+  if (!ip) return "";
+  const salt = process.env.TRIAL_IDENTITY_SALT || "hm-trial-ip-salt";
+  const fingerprint = userAgent ? `${ip}|${userAgent}` : ip;
+  const digest = crypto.createHash("sha256").update(`${salt}:${fingerprint}`).digest("hex");
+  return `fp_${digest}`;
+}
+
 function parseCookieHeader(cookieHeader = "") {
   return String(cookieHeader || "")
     .split(";")
@@ -38,9 +71,14 @@ export function ensureTrialIdentity(req, res, next) {
     return;
   }
 
+  const clientIp = getClientIp(req);
+  const userAgent = getClientUserAgent(req);
+  const fingerprintTrialId = createFingerprintTrialId(clientIp, userAgent);
   const cookies = parseCookieHeader(req.headers.cookie);
   const headerTrialId = req.headers["x-trial-id"];
-  let trialId = typeof headerTrialId === "string" ? headerTrialId.trim() : cookies[TRIAL_COOKIE_NAME];
+  let trialId =
+    fingerprintTrialId ||
+    (typeof headerTrialId === "string" ? headerTrialId.trim() : cookies[TRIAL_COOKIE_NAME]);
 
   if (!isValidTrialId(trialId)) {
     trialId = crypto.randomUUID();

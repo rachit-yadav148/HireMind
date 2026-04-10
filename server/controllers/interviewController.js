@@ -7,6 +7,18 @@ import * as gemini from "../services/geminiService.js";
 
 const TOTAL_QUESTIONS = 10;
 const FREE_INTERVIEW_LIMIT_SECONDS = 180;
+const INTERVIEW_TRIAL_COOLDOWN_SECONDS = Math.max(
+  10,
+  Number(process.env.TRIAL_INTERVIEW_COOLDOWN_SECONDS || 45)
+);
+
+function getSecondsRemainingFromTimestamp(dateValue, cooldownSeconds) {
+  if (!dateValue) return 0;
+  const last = new Date(dateValue).getTime();
+  if (!Number.isFinite(last)) return 0;
+  const elapsed = Math.floor((Date.now() - last) / 1000);
+  return Math.max(0, cooldownSeconds - Math.max(0, elapsed));
+}
 
 function getStageForQuestionNumber(questionNumber) {
   const pos = ((Math.max(1, Number(questionNumber)) - 1) % 10) + 1;
@@ -159,6 +171,19 @@ export async function startInterview(req, res) {
         return res.status(400).json({ message: "Trial identity missing. Refresh and try again." });
       }
       const usage = await upsertTrialUsage(req.trialId);
+
+      const retryAfterSeconds = getSecondsRemainingFromTimestamp(
+        usage?.interviewLastAttemptAt,
+        INTERVIEW_TRIAL_COOLDOWN_SECONDS
+      );
+      if (retryAfterSeconds > 0) {
+        return res.status(429).json({
+          message: `Please wait ${retryAfterSeconds}s before trying again.`,
+          code: "TRIAL_RATE_LIMIT",
+          retryAfterSeconds,
+        });
+      }
+
       if (usage?.interviewTrialUsed) {
         return res.status(403).json({
           message: "Free AI interview trial already used. Create a free account to continue.",
@@ -211,6 +236,7 @@ export async function startInterview(req, res) {
           $set: {
             interviewTrialUsed: true,
             interviewSecondsUsed: 0,
+            interviewLastAttemptAt: new Date(),
             lastSeenAt: new Date(),
           },
         },
