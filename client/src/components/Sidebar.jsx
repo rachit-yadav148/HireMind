@@ -8,6 +8,8 @@ import {
   MessageSquare,
   LogOut,
 } from "./Icons";
+import { CreditCard } from "lucide-react";
+import CreditDisplay from "./CreditDisplay";
 
 const links = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -15,6 +17,7 @@ const links = [
   { to: "/dashboard/interview", label: "Interview Simulator", icon: Mic },
   { to: "/dashboard/questions", label: "Question Generator", icon: ListChecks },
   { to: "/dashboard/applications", label: "Application Tracker", icon: Briefcase },
+  { to: "/dashboard/plans", label: "Plans & Pricing", icon: CreditCard },
   { to: "/dashboard/feedback", label: "Feedback", icon: MessageSquare },
 ];
 
@@ -43,6 +46,9 @@ export default function Sidebar({ onLogout, userName, mobileMenuOpen, onCloseMob
             Hire<span className="text-brand-400">Mind</span>
           </Link>
           <p className="text-xs text-slate-500 mt-1 truncate">{userName}</p>
+          <div className="mt-3 hidden md:block">
+            <CreditDisplay />
+          </div>
         </div>
         <nav className="flex-1 p-3 pb-4 space-y-1 overflow-y-auto">
           {links.map(({ to, label, icon: Icon }) => (

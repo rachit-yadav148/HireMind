@@ -3,12 +3,14 @@ import * as interview from "../controllers/interviewController.js";
 import { authRequired, optionalAuth } from "../middleware/auth.js";
 import { ensureTrialIdentity } from "../middleware/trialIdentity.js";
 import { uploadQuestionInterviewContext } from "../middleware/upload.js";
+import { requireCredits } from "../middleware/creditCheck.js";
 
 const r = Router();
 r.post(
   "/start",
   optionalAuth,
   ensureTrialIdentity,
+  requireCredits("ai_interview"),
   uploadQuestionInterviewContext.fields([
     { name: "jobDescription", maxCount: 1 },
     { name: "resume", maxCount: 1 },

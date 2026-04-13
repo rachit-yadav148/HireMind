@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Sidebar from "./Sidebar";
+import CreditDisplay from "./CreditDisplay";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -36,19 +37,22 @@ export default function Layout() {
 
       <div className="flex-1 min-w-0">
         <header className="md:hidden sticky top-0 z-20 border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-sm px-4 py-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <Link to="/dashboard" className="font-display font-bold text-lg text-white tracking-tight">
               Hire<span className="text-brand-400">Mind</span>
             </Link>
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen((v) => !v)}
-              aria-label="Toggle menu"
-              aria-expanded={mobileMenuOpen}
-              className="rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm font-medium text-slate-200"
-            >
-              {mobileMenuOpen ? "Close" : "Menu"}
-            </button>
+            <div className="flex items-center gap-2">
+              <CreditDisplay />
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((v) => !v)}
+                aria-label="Toggle menu"
+                aria-expanded={mobileMenuOpen}
+                className="rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm font-medium text-slate-200"
+              >
+                {mobileMenuOpen ? "Close" : "Menu"}
+              </button>
+            </div>
           </div>
         </header>
 

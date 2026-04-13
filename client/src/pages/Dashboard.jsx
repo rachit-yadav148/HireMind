@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../services/api";
 import { FileSearch, Mic, ListChecks, Briefcase } from "../components/Icons";
+import DashboardCreditCard from "../components/DashboardCreditCard";
 
 const cards = [
   {
@@ -55,6 +56,11 @@ export default function Dashboard() {
       {err && (
         <p className="text-amber-400/90 text-sm mb-4">{err}</p>
       )}
+
+      {/* Credit Card */}
+      <div className="mb-6 sm:mb-10">
+        <DashboardCreditCard />
+      </div>
 
       {stats && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 sm:mb-10">

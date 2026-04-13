@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../services/api";
 import posthog from "../posthog";
 import { useAuth } from "../context/AuthContext";
+import { useCredits } from "../context/CreditContext";
 import SignupPromptModal from "../components/SignupPromptModal";
+import CreditQuotaModal from "../components/CreditQuotaModal";
 import {
   FREE_RESUME_ANALYSIS_LIMIT,
   getFreeResumeAnalysisUsed,
@@ -14,6 +16,7 @@ const EMPLOYMENT_TYPES = ["Full-time", "Internship", "Contract", "Part-time"];
 
 export default function ResumeAnalyzer() {
   const { isAuthenticated } = useAuth();
+  const { refreshCredits } = useCredits();
   const resumeInputRef = useRef(null);
   const jdInputRef = useRef(null);
 
@@ -35,6 +38,8 @@ export default function ResumeAnalyzer() {
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
   const [trialStatus, setTrialStatus] = useState(null);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const [creditError, setCreditError] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -104,6 +109,11 @@ export default function ResumeAnalyzer() {
       });
       posthog.capture("resume_analysis_generated");
 
+      // Refresh credits for authenticated users
+      if (isAuthenticated) {
+        refreshCredits();
+      }
+
       if (!isAuthenticated) {
         markFreeResumeAnalysisUsed();
         trackResumeAnalysisFreeCompleted({
@@ -121,9 +131,16 @@ export default function ResumeAnalyzer() {
         }
       }
     } catch (err) {
-      setError(getApiErrorMessage(err, "Resume analysis failed"));
-      if (err?.response?.data?.code === "FREE_LIMIT_REACHED") {
-        setShowSignupPrompt(true);
+      const errorCode = err?.response?.data?.code;
+      if (isAuthenticated && (errorCode === "INSUFFICIENT_CREDITS" || errorCode === "UNLIMITED_CAP_REACHED")) {
+        setCreditError(err.response.data);
+        setShowCreditModal(true);
+        setError(err.response.data.message);
+      } else {
+        setError(getApiErrorMessage(err, "Resume analysis failed"));
+        if (errorCode === "FREE_LIMIT_REACHED") {
+          setShowSignupPrompt(true);
+        }
       }
     } finally {
       setLoading(false);
@@ -443,6 +460,11 @@ export default function ResumeAnalyzer() {
       )}
 
       <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} />
+      <CreditQuotaModalWrapper
+        show={showCreditModal}
+        onClose={() => setShowCreditModal(false)}
+        error={creditError}
+      />
       </div>
     </div>
   );
@@ -543,4 +565,16 @@ function parseSuggestionText(text) {
     title: parts[0],
     points: parts.slice(1).map((part) => part.replace(/\.$/, "")),
   };
+}
+
+function CreditQuotaModalWrapper({ show, onClose, error }) {
+  if (!show || !error) return null;
+  return (
+    <CreditQuotaModal
+      isOpen={show}
+      onClose={onClose}
+      reason={error.code}
+      creditsNeeded={error.creditsNeeded || 0}
+    />
+  );
 }

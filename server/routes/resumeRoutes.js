@@ -3,12 +3,14 @@ import * as resume from "../controllers/resumeController.js";
 import { authRequired, optionalAuth } from "../middleware/auth.js";
 import { ensureTrialIdentity } from "../middleware/trialIdentity.js";
 import { uploadResumeAnalysis } from "../middleware/upload.js";
+import { requireCredits } from "../middleware/creditCheck.js";
 
 const r = Router();
 r.post(
   "/analyze",
   optionalAuth,
   ensureTrialIdentity,
+  requireCredits("resume_analysis"),
   uploadResumeAnalysis.fields([
     { name: "resume", maxCount: 1 },
     { name: "jobDescription", maxCount: 1 },

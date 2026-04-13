@@ -3,7 +3,9 @@ import { api, getApiErrorMessage } from "../services/api";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import posthog from "../posthog";
 import { useAuth } from "../context/AuthContext";
+import { useCredits } from "../context/CreditContext";
 import SignupPromptModal from "../components/SignupPromptModal";
+import CreditQuotaModal from "../components/CreditQuotaModal";
 import {
   FREE_INTERVIEW_LIMIT_SECONDS,
   addFreeInterviewSecondsUsed,
@@ -51,6 +53,7 @@ function speak(text, onEnd) {
 
 export default function InterviewSimulator() {
   const { isAuthenticated } = useAuth();
+  const { refreshCredits } = useCredits();
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [jdFile, setJdFile] = useState(null);
@@ -74,6 +77,8 @@ export default function InterviewSimulator() {
   const [audioStatus, setAudioStatus] = useState("");
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
   const [trialStatus, setTrialStatus] = useState(null);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const [creditError, setCreditError] = useState(null);
 
   const remainingFreeInterviewSeconds =
     trialStatus?.mode === "guest"
@@ -302,6 +307,12 @@ export default function InterviewSimulator() {
         role,
         duration_minutes: durationMinutes,
       });
+
+      // Refresh credits for authenticated users
+      if (isAuthenticated) {
+        refreshCredits();
+      }
+
       if (!isAuthenticated) {
         trackAiInterviewFreeStarted({
           resume_uploaded: Boolean(resumeFile),
@@ -313,14 +324,21 @@ export default function InterviewSimulator() {
       speakText(data.question);
       reset();
     } catch (err) {
-      setApiError(getApiErrorMessage(err, "Could not start interview"));
-      if (err?.response?.data?.code === "FREE_LIMIT_REACHED") {
-        setShowSignupPrompt(true);
-        try {
-          const { data: status } = await api.get("/trial/status");
-          setTrialStatus(status || null);
-        } catch {
-          /* noop */
+      const errorCode = err?.response?.data?.code;
+      if (isAuthenticated && (errorCode === "INSUFFICIENT_CREDITS" || errorCode === "UNLIMITED_CAP_REACHED")) {
+        setCreditError(err.response.data);
+        setShowCreditModal(true);
+        setApiError(err.response.data.message);
+      } else {
+        setApiError(getApiErrorMessage(err, "Could not start interview"));
+        if (errorCode === "FREE_LIMIT_REACHED") {
+          setShowSignupPrompt(true);
+          try {
+            const { data: status } = await api.get("/trial/status");
+            setTrialStatus(status || null);
+          } catch {
+            /* noop */
+          }
         }
       }
     } finally {
@@ -781,6 +799,12 @@ export default function InterviewSimulator() {
       )}
 
       <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} />
+      <CreditQuotaModal
+        isOpen={showCreditModal}
+        onClose={() => setShowCreditModal(false)}
+        reason={creditError?.code}
+        creditsNeeded={creditError?.creditsNeeded || 0}
+      />
       </div>
     </div>
   );

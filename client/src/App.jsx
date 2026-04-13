@@ -13,6 +13,7 @@ import InterviewSimulator from "./pages/InterviewSimulator";
 import QuestionGenerator from "./pages/QuestionGenerator";
 import ApplicationTracker from "./pages/ApplicationTracker";
 import Feedback from "./pages/Feedback";
+import Plans from "./pages/Plans";
 import posthog from "./posthog";
 
 function PostHogPageviewTracker() {
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="questions" element={<QuestionGenerator />} />
           <Route path="applications" element={<ApplicationTracker />} />
           <Route path="feedback" element={<Feedback />} />
+          <Route path="plans" element={<Plans />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

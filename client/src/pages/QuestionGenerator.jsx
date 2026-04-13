@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { api } from "../services/api";
 import posthog from "../posthog";
+import { useCredits } from "../context/CreditContext";
+import CreditQuotaModal from "../components/CreditQuotaModal";
 
 const difficultyColors = {
   easy: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -9,6 +11,7 @@ const difficultyColors = {
 };
 
 export default function QuestionGenerator() {
+  const { refreshCredits } = useCredits();
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [jdFile, setJdFile] = useState(null);
@@ -17,6 +20,8 @@ export default function QuestionGenerator() {
   const [error, setError] = useState("");
   const [bank, setBank] = useState(null);
   const [activeTab, setActiveTab] = useState("technical");
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const [creditError, setCreditError] = useState(null);
 
   async function handleGenerate(e) {
     e.preventDefault();
@@ -37,8 +42,18 @@ export default function QuestionGenerator() {
       posthog.capture("question_bank_generated", {
         company,
       });
+
+      // Refresh credits after successful generation
+      refreshCredits();
     } catch (err) {
-      setError(err.response?.data?.message || "Generation failed");
+      const errorCode = err?.response?.data?.code;
+      if (errorCode === "INSUFFICIENT_CREDITS" || errorCode === "UNLIMITED_CAP_REACHED") {
+        setCreditError(err.response.data);
+        setShowCreditModal(true);
+        setError(err.response.data.message);
+      } else {
+        setError(err.response?.data?.message || "Generation failed");
+      }
     } finally {
       setLoading(false);
     }
@@ -191,6 +206,12 @@ export default function QuestionGenerator() {
           />
         </div>
       )}
+
+      <CreditQuotaModalWrapper
+        show={showCreditModal}
+        onClose={() => setShowCreditModal(false)}
+        error={creditError}
+      />
     </div>
   );
 }
@@ -253,6 +274,18 @@ function BulletLines({ title, value }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+function CreditQuotaModalWrapper({ show, onClose, error }) {
+  if (!show || !error) return null;
+  return (
+    <CreditQuotaModal
+      isOpen={show}
+      onClose={onClose}
+      reason={error.code}
+      creditsNeeded={error.creditsNeeded || 0}
+    />
   );
 }
 
