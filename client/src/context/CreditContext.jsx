@@ -1,11 +1,16 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { api, getToken } from "../services/api";
+import { useAuth } from "./AuthContext";
 
 const CreditContext = createContext();
 
 export function CreditProvider({ children }) {
   const [creditStatus, setCreditStatus] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  const lastFetchRef = useRef(0);
 
   const fetchCreditStatus = useCallback(async () => {
     const token = getToken();
@@ -17,6 +22,7 @@ export function CreditProvider({ children }) {
     try {
       const res = await api.get("/credits/status");
       setCreditStatus(res.data);
+      lastFetchRef.current = Date.now();
     } catch (err) {
       console.error("Failed to fetch credit status:", err);
       setCreditStatus(null);
@@ -25,9 +31,18 @@ export function CreditProvider({ children }) {
     }
   }, []);
 
+  // Re-fetch when auth state changes (login / logout)
   useEffect(() => {
     fetchCreditStatus();
-  }, [fetchCreditStatus]);
+  }, [isAuthenticated, fetchCreditStatus]);
+
+  // Re-fetch on dashboard navigation if data is older than 5 seconds
+  useEffect(() => {
+    if (isAuthenticated && location.pathname.startsWith("/dashboard")) {
+      const stale = Date.now() - lastFetchRef.current > 5000;
+      if (stale) fetchCreditStatus();
+    }
+  }, [location.pathname, isAuthenticated, fetchCreditStatus]);
 
   const refreshCredits = useCallback(() => {
     return fetchCreditStatus();
