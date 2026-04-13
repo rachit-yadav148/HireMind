@@ -39,8 +39,9 @@ export default function QuestionGenerator() {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setBank(data);
-      posthog.capture("question_bank_generated", {
+      posthog.capture("question_generated", {
         company,
+        role,
       });
 
       // Refresh credits after successful generation
