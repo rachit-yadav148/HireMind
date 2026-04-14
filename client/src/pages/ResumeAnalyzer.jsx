@@ -109,8 +109,9 @@ export default function ResumeAnalyzer() {
       });
       posthog.capture("resume_analysis_generated");
 
-      // Refresh credits for authenticated users
+      // Track credit usage for authenticated users
       if (isAuthenticated) {
+        posthog.capture("credit_used", { feature: "resume_analysis", amount: 3 });
         refreshCredits();
       }
 

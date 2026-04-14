@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { useCredits } from "../context/CreditContext";
 import { api } from "../services/api";
 import { openRazorpayCheckout } from "../utils/razorpay";
+import posthog from "../posthog";
 
 const PLANS = [
   {
@@ -61,6 +62,7 @@ export default function CreditQuotaModal({ isOpen, onClose, reason = "INSUFFICIE
     setErrorMsg("");
     try {
       const { data: order } = await api.post("/payments/create-order", { planId });
+      posthog.capture("payment_started", { plan: planId, amount: order.amount / 100, source: "modal" });
 
       openRazorpayCheckout({
         order,
@@ -68,6 +70,7 @@ export default function CreditQuotaModal({ isOpen, onClose, reason = "INSUFFICIE
         onSuccess: async (paymentData) => {
           try {
             await api.post("/payments/verify", paymentData);
+            posthog.capture("payment_success", { plan: planId, amount: order.amount / 100, credits: order.credits, source: "modal" });
             refreshCredits();
             onClose();
           } catch (err) {

@@ -43,6 +43,7 @@ export default function QuestionGenerator() {
         company,
         role,
       });
+      posthog.capture("credit_used", { feature: "question_generator", amount: 3 });
 
       // Refresh credits after successful generation
       refreshCredits();

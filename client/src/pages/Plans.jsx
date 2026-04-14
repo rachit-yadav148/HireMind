@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Zap, Check, CreditCard, TrendingUp, AlertCircle, Loader2 } from "lucide-react";
 import { useCredits } from "../context/CreditContext";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
 import { openRazorpayCheckout } from "../utils/razorpay";
+import posthog from "../posthog";
 
 const PLANS = [
   {
@@ -91,12 +92,17 @@ export default function Plans() {
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
+  useEffect(() => {
+    posthog.capture("payment_page_view");
+  }, []);
+
   const handlePlanSelect = async (planId) => {
     setPaying(planId);
     setSuccessMsg("");
     setErrorMsg("");
     try {
       const { data: order } = await api.post("/payments/create-order", { planId });
+      posthog.capture("payment_started", { plan: planId, amount: order.amount / 100 });
 
       openRazorpayCheckout({
         order,
@@ -104,6 +110,7 @@ export default function Plans() {
         onSuccess: async (paymentData) => {
           try {
             const { data } = await api.post("/payments/verify", paymentData);
+            posthog.capture("payment_success", { plan: planId, amount: order.amount / 100, credits: order.credits });
             setSuccessMsg(data.message);
             refreshCredits();
           } catch (err) {

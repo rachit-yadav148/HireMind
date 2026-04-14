@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { useLocation } from "react-router-dom";
 import { api, getToken } from "../services/api";
 import { useAuth } from "./AuthContext";
+import posthog from "../posthog";
 
 const CreditContext = createContext();
 
@@ -11,6 +12,7 @@ export function CreditProvider({ children }) {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
   const lastFetchRef = useRef(0);
+  const exhaustedFiredRef = useRef(false);
 
   const fetchCreditStatus = useCallback(async () => {
     const token = getToken();
@@ -21,7 +23,19 @@ export function CreditProvider({ children }) {
     }
     try {
       const res = await api.get("/credits/status");
-      setCreditStatus(res.data);
+      setCreditStatus((prev) => {
+        // Fire credits_exhausted once when credits drop to 0
+        if (
+          res.data.credits === 0 &&
+          res.data.subscriptionType === "free" &&
+          prev?.credits > 0 &&
+          !exhaustedFiredRef.current
+        ) {
+          posthog.capture("credits_exhausted");
+          exhaustedFiredRef.current = true;
+        }
+        return res.data;
+      });
       lastFetchRef.current = Date.now();
     } catch (err) {
       console.error("Failed to fetch credit status:", err);

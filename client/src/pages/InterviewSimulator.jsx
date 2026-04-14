@@ -308,8 +308,9 @@ export default function InterviewSimulator() {
         duration_minutes: durationMinutes,
       });
 
-      // Refresh credits for authenticated users
+      // Track credit usage for authenticated users
       if (isAuthenticated) {
+        posthog.capture("credit_used", { feature: "interview", amount: 10 });
         refreshCredits();
       }
 
