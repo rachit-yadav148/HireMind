@@ -460,7 +460,7 @@ export default function ResumeAnalyzer() {
         </div>
       )}
 
-      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} />
+      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} feature="resume_analysis" />
       <CreditQuotaModalWrapper
         show={showCreditModal}
         onClose={() => setShowCreditModal(false)}

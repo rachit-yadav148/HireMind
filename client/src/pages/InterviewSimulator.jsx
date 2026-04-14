@@ -799,7 +799,7 @@ export default function InterviewSimulator() {
         </div>
       )}
 
-      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} />
+      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} feature="ai_interview" />
       <CreditQuotaModal
         isOpen={showCreditModal}
         onClose={() => setShowCreditModal(false)}
