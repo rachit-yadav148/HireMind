@@ -28,10 +28,6 @@ const PLANS = {
 // POST /api/payments/create-order
 export async function createOrder(req, res) {
   try {
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-      return res.status(503).json({ message: "Payments will be available soon. We're setting things up — check back in a couple of days!" });
-    }
-
     const { planId } = req.body;
     const plan = PLANS[planId];
     if (!plan) {
