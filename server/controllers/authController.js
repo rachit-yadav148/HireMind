@@ -98,12 +98,22 @@ export async function resendEmailOtp(req, res) {
       return res.status(400).json({ message: "Email already verified" });
     }
 
+    // Prevent resend if the current OTP was generated less than 60 seconds ago
+    // This avoids the race condition where the first email is still in transit
+    if (
+      user.emailOtpExpiresAt &&
+      new Date(user.emailOtpExpiresAt).getTime() > Date.now() &&
+      new Date(user.emailOtpExpiresAt).getTime() - Date.now() > 9 * 60 * 1000 // created < 60s ago
+    ) {
+      return res.status(429).json({ message: "Please wait at least 60 seconds before requesting a new OTP." });
+    }
+
     const otp = createEmailOtp();
     user.emailOtpHash = hashEmailOtp(otp);
     user.emailOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
 
-    triggerSignupOtpEmail(user.email, otp);
+    await triggerSignupOtpEmail(user.email, otp);
 
     return res.json({
       message: "OTP resent successfully.",
@@ -126,7 +136,7 @@ function createEmailOtp() {
   return String(crypto.randomInt(100000, 1000000));
 }
 
-function triggerSignupOtpEmail(toEmail, otp) {
+async function triggerSignupOtpEmail(toEmail, otp) {
   console.log(`[OTP] Attempting OTP delivery to ${toEmail}`);
 
   if (!canSendMail()) {
@@ -137,13 +147,12 @@ function triggerSignupOtpEmail(toEmail, otp) {
     return;
   }
 
-  void sendSignupOtpEmail({ toEmail, otp })
-    .then(() => {
-      console.log(`[OTP] OTP email sent successfully to ${toEmail}`);
-    })
-    .catch((err) => {
-      console.error(`[OTP] Failed to send signup OTP email to ${toEmail}:`, err?.message || err);
-    });
+  try {
+    await sendSignupOtpEmail({ toEmail, otp });
+    console.log(`[OTP] OTP email sent successfully to ${toEmail}`);
+  } catch (err) {
+    console.error(`[OTP] Failed to send signup OTP email to ${toEmail}:`, err?.message || err);
+  }
 }
 
 export async function register(req, res) {
@@ -191,7 +200,7 @@ export async function register(req, res) {
       user.emailOtpExpiresAt = otpExpiresAt;
       await user.save();
 
-      triggerSignupOtpEmail(user.email, otp);
+      await triggerSignupOtpEmail(user.email, otp);
 
       return res.status(201).json({
         message: "OTP sent to your email. Verify to complete signup.",
