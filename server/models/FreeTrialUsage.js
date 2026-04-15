@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 const freeTrialUsageSchema = new mongoose.Schema(
   {
     trialId: { type: String, required: true, unique: true, index: true },
+    linkedFingerprints: { type: [String], default: [], index: true },
     resumeAnalysesUsed: { type: Number, default: 0 },
     resumeLastAttemptAt: { type: Date, default: null },
     interviewTrialUsed: { type: Boolean, default: false },

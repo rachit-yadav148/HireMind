@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import FreeTrialUsage from "../models/FreeTrialUsage.js";
 
 const TRIAL_COOKIE_NAME = "hm_trial_id";
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
@@ -65,7 +66,7 @@ function isValidTrialId(value) {
   return typeof value === "string" && value.length >= 20 && value.length <= 128;
 }
 
-export function ensureTrialIdentity(req, res, next) {
+export async function ensureTrialIdentity(req, res, next) {
   if (req.userId) {
     next();
     return;
@@ -75,13 +76,41 @@ export function ensureTrialIdentity(req, res, next) {
   const userAgent = getClientUserAgent(req);
   const fingerprintTrialId = createFingerprintTrialId(clientIp, userAgent);
   const cookies = parseCookieHeader(req.headers.cookie);
-  const headerTrialId = req.headers["x-trial-id"];
+  const headerTrialId = typeof req.headers["x-trial-id"] === "string" ? req.headers["x-trial-id"].trim() : "";
+  const cookieTrialId = cookies[TRIAL_COOKIE_NAME] || "";
+
+  // Prefer persistent IDs (header from localStorage, then cookie) over fingerprint.
+  // Fingerprint changes when the user's IP changes (mobile WiFi ↔ cellular, dynamic ISP).
   let trialId =
-    fingerprintTrialId ||
-    (typeof headerTrialId === "string" ? headerTrialId.trim() : cookies[TRIAL_COOKIE_NAME]);
+    (isValidTrialId(headerTrialId) ? headerTrialId : "") ||
+    (isValidTrialId(cookieTrialId) ? cookieTrialId : "") ||
+    "";
+
+  // If no persistent ID, check if this fingerprint was already linked to an existing trial
+  if (!trialId && fingerprintTrialId) {
+    try {
+      const linked = await FreeTrialUsage.findOne({ linkedFingerprints: fingerprintTrialId }).select("trialId").lean();
+      if (linked) {
+        trialId = linked.trialId;
+      }
+    } catch { /* noop — fall through to fingerprint */ }
+  }
+
+  if (!trialId) {
+    trialId = fingerprintTrialId;
+  }
 
   if (!isValidTrialId(trialId)) {
     trialId = crypto.randomUUID();
+  }
+
+  // Link the current fingerprint to this trial record (async, non-blocking)
+  if (fingerprintTrialId && isValidTrialId(trialId)) {
+    FreeTrialUsage.findOneAndUpdate(
+      { trialId },
+      { $addToSet: { linkedFingerprints: fingerprintTrialId } },
+      { upsert: false }
+    ).catch(() => {});
   }
 
   req.trialId = trialId;
