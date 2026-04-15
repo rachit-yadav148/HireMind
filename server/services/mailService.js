@@ -38,9 +38,9 @@ async function createTransporter() {
     port,
     secure,
     auth: { user, pass },
-    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 20000),
-    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 15000),
-    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 30000),
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 10000),
+    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 5000),
+    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 15000),
   });
 }
 
@@ -78,9 +78,9 @@ async function sendMailWithConfig(config, payload) {
     port: config.port,
     secure: config.secure,
     auth: { user: config.user, pass: config.pass },
-    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 20000),
-    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 15000),
-    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 30000),
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 10000),
+    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 5000),
+    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 15000),
   });
 
   await transporter.sendMail(payload);

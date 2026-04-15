@@ -200,7 +200,9 @@ export async function register(req, res) {
       user.emailOtpExpiresAt = otpExpiresAt;
       await user.save();
 
-      await triggerSignupOtpEmail(user.email, otp);
+      // Fire-and-forget: respond immediately so the user isn't blocked.
+      // The 60-second resend cooldown prevents the OTP-overwrite race condition.
+      triggerSignupOtpEmail(user.email, otp);
 
       return res.status(201).json({
         message: "OTP sent to your email. Verify to complete signup.",
