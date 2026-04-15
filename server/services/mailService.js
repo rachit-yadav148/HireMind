@@ -24,24 +24,37 @@ function canSendViaResend() {
   return Boolean(apiKey && from);
 }
 
+let _cachedTransporter = null;
+let _cachedTransporterKey = "";
+
 async function createTransporter() {
   const { host, port, user, pass, secure } = getSmtpConfig();
   if (!host || !port || !user || !pass) {
     throw new Error("SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.");
   }
 
+  const key = `${host}:${port}:${secure}:${user}`;
+  if (_cachedTransporter && _cachedTransporterKey === key) {
+    return _cachedTransporter;
+  }
+
   const mod = await import("nodemailer");
   const nodemailer = mod?.default || mod;
 
-  return nodemailer.createTransport({
+  _cachedTransporter = nodemailer.createTransport({
     host,
     port,
     secure,
     auth: { user, pass },
+    pool: true,
+    maxConnections: 3,
     connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 10000),
     greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 5000),
     socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 15000),
   });
+  _cachedTransporterKey = key;
+
+  return _cachedTransporter;
 }
 
 function isTimeoutLikeError(err) {
@@ -87,8 +100,8 @@ async function sendMailWithConfig(config, payload) {
 }
 
 async function sendMailWithRetry(payload) {
-  const primary = getSmtpConfig();
-  await sendMailWithConfig(primary, payload);
+  const transporter = await createTransporter();
+  await transporter.sendMail(payload);
 }
 
 async function sendMailWithResend(payload) {
@@ -119,6 +132,17 @@ async function sendMailWithResend(payload) {
 }
 
 async function sendMailResilient(payload) {
+  // Prefer Resend API when configured — it's an HTTP call (~200ms)
+  // vs SMTP which needs TCP+TLS+AUTH on every cold connection (~5-20s)
+  if (canSendViaResend()) {
+    try {
+      await sendMailWithResend(payload);
+      return;
+    } catch (resendErr) {
+      console.warn(`[MAIL] Resend API failed (${resendErr?.message || resendErr}). Falling back to SMTP.`);
+    }
+  }
+
   try {
     await sendMailWithRetry(payload);
     return;
@@ -134,12 +158,6 @@ async function sendMailResilient(payload) {
       } catch (gmailFallbackErr) {
         err = gmailFallbackErr;
       }
-    }
-
-    if (canSendViaResend()) {
-      console.warn(`[MAIL] SMTP delivery failed. Falling back to Resend API. Reason: ${err?.message || err}`);
-      await sendMailWithResend(payload);
-      return;
     }
 
     throw err;
