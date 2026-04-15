@@ -88,9 +88,51 @@ export async function verifyPayment(req, res) {
     }
 
     // Fetch payment details from Razorpay to double-check
-    const payment = await getRazorpay().payments.fetch(razorpay_payment_id);
+    let payment = await getRazorpay().payments.fetch(razorpay_payment_id);
+
+    // Razorpay handler fires after authorization. Auto-capture may take a moment.
+    // If still "authorized", capture it manually. If "created", retry after a short delay.
+    if (payment.status === "authorized") {
+      try {
+        payment = await getRazorpay().payments.capture(razorpay_payment_id, payment.amount, payment.currency);
+      } catch (captureErr) {
+        // Capture may fail if Razorpay already auto-captured in the meantime — re-fetch
+        console.warn("[PAY] Manual capture failed, re-fetching:", captureErr?.error?.description || captureErr?.message);
+        payment = await getRazorpay().payments.fetch(razorpay_payment_id);
+      }
+    } else if (payment.status === "created") {
+      // Payment hasn't been authorized yet — wait briefly and retry
+      await new Promise((r) => setTimeout(r, 3000));
+      payment = await getRazorpay().payments.fetch(razorpay_payment_id);
+      if (payment.status === "authorized") {
+        try {
+          payment = await getRazorpay().payments.capture(razorpay_payment_id, payment.amount, payment.currency);
+        } catch {
+          payment = await getRazorpay().payments.fetch(razorpay_payment_id);
+        }
+      }
+    }
+
     if (payment.status !== "captured") {
-      return res.status(400).json({ message: "Payment not captured yet" });
+      console.error(`[PAY] Payment ${razorpay_payment_id} status is "${payment.status}" — expected "captured"`);
+      return res.status(400).json({
+        message: `Payment status is "${payment.status}". Please wait a moment and refresh, or contact support.`,
+        paymentStatus: payment.status,
+      });
+    }
+
+    // Prevent duplicate credit grants for the same payment
+    const alreadyProcessed = await CreditTransaction.findOne({
+      "metadata.razorpayPaymentId": razorpay_payment_id,
+    }).lean();
+    if (alreadyProcessed) {
+      const status = await getCreditStatus(req.userId);
+      return res.json({
+        success: true,
+        message: `${plan.label} already activated!`,
+        credits: status.credits,
+        subscriptionType: planId,
+      });
     }
 
     // Activate the subscription / add credits
@@ -125,6 +167,88 @@ export async function verifyPayment(req, res) {
   } catch (err) {
     console.error("Payment verification error:", err);
     res.status(500).json({ message: "Payment verification failed" });
+  }
+}
+
+// POST /api/payments/webhook — Razorpay server-to-server webhook (safety net)
+export async function razorpayWebhook(req, res) {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      return res.status(200).json({ status: "webhook_secret_not_configured" });
+    }
+
+    const signature = req.headers["x-razorpay-signature"];
+    if (!signature) {
+      return res.status(400).json({ status: "missing_signature" });
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", webhookSecret)
+      .update(JSON.stringify(req.body))
+      .digest("hex");
+
+    if (expectedSignature !== signature) {
+      return res.status(400).json({ status: "invalid_signature" });
+    }
+
+    const event = req.body?.event;
+    const payment = req.body?.payload?.payment?.entity;
+
+    if (event !== "payment.captured" || !payment) {
+      return res.status(200).json({ status: "ignored" });
+    }
+
+    const orderId = payment.order_id;
+    if (!orderId) {
+      return res.status(200).json({ status: "no_order_id" });
+    }
+
+    // Check if already processed
+    const alreadyProcessed = await CreditTransaction.findOne({
+      "metadata.razorpayPaymentId": payment.id,
+    }).lean();
+    if (alreadyProcessed) {
+      return res.status(200).json({ status: "already_processed" });
+    }
+
+    // Fetch order to get userId and planId from notes
+    const order = await getRazorpay().orders.fetch(orderId);
+    const userId = order.notes?.userId;
+    const planId = order.notes?.planId;
+    const plan = PLANS[planId];
+
+    if (!userId || !plan) {
+      console.error(`[WEBHOOK] Missing userId or invalid planId in order ${orderId}`);
+      return res.status(200).json({ status: "missing_metadata" });
+    }
+
+    await activateSubscription(userId, planId, plan.durationMonths);
+
+    const status = await getCreditStatus(userId);
+    await CreditTransaction.create({
+      userId,
+      type: "purchase",
+      amount: plan.credits,
+      balanceBefore: status.credits - plan.credits,
+      balanceAfter: status.credits,
+      feature: "purchase",
+      metadata: {
+        subscriptionType: planId,
+        description: `${plan.label} purchased via Razorpay (webhook)`,
+        razorpayOrderId: orderId,
+        razorpayPaymentId: payment.id,
+        amountPaid: payment.amount / 100,
+        currency: payment.currency,
+        source: "webhook",
+      },
+    });
+
+    console.log(`[WEBHOOK] Credits granted for user ${userId}, plan ${planId}, payment ${payment.id}`);
+    return res.status(200).json({ status: "credits_granted" });
+  } catch (err) {
+    console.error("[WEBHOOK] Error:", err);
+    return res.status(200).json({ status: "error" });
   }
 }
 
