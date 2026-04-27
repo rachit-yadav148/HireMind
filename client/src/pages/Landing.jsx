@@ -369,132 +369,196 @@ function HeroInterviewDemo() {
   );
 }
 
-/* ─── Mobile hero visual — compact interview status cards (sm screens only) ─ */
+/* ─── Mobile hero visual — full-size interview demo for small screens ─────── */
+const MOBILE_QUESTIONS = [
+  { ai: "Tell me about a challenging project you've worked on.", user: "At my internship, I built a real-time data pipeline handling 50K events/sec..." },
+  { ai: "Walk me through how you'd design a URL shortener.", user: "I'd use a hash function, store in Redis for fast reads, add a CDN layer..." },
+  { ai: "Describe a time you resolved a conflict in a team.", user: "During our capstone we disagreed on architecture — I set up a sync meeting..." },
+];
+
 function MobileHeroVisual() {
-  const [phase, setPhase] = useState(0); // 0 = AI speaking, 1 = Listening
-  const [timeLeft, setTimeLeft] = useState(DEMO_START_SECONDS - 42);
+  const [qIdx, setQIdx] = useState(0);
+  const [phase, setPhase] = useState(0); // 0 = AI speaking, 1 = user responding
+  const [timeLeft, setTimeLeft] = useState(DEMO_START_SECONDS - 30);
   const ref = useRef(null);
   const inView = useInView(ref, { once: false, margin: "0px 0px -40px 0px" });
 
+  // Cycle AI → user → next question
   useEffect(() => {
     if (!inView) return;
-    const t = setInterval(() => setPhase((p) => 1 - p), 2800);
-    return () => clearInterval(t);
-  }, [inView]);
+    const dur = phase === 0 ? 3500 : 5000;
+    const t = setTimeout(() => {
+      if (phase === 0) {
+        setPhase(1);
+      } else {
+        const nextIdx = (qIdx + 1) % MOBILE_QUESTIONS.length;
+        if (nextIdx === 0) setTimeLeft(DEMO_START_SECONDS - 30); // reset timer on loop
+        setPhase(0);
+        setQIdx(nextIdx);
+      }
+    }, dur);
+    return () => clearTimeout(t);
+  }, [phase, qIdx, inView]);
 
+  // Live countdown
   useEffect(() => {
     if (!inView) return;
-    const id = setInterval(() => {
-      setTimeLeft((t) => Math.max(0, t - 1));
-    }, 1000);
+    const id = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
     return () => clearInterval(id);
   }, [inView]);
+
+  const q = MOBILE_QUESTIONS[qIdx];
+  const isAI = phase === 0;
 
   return (
     <motion.div
       ref={ref}
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, delay: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.6, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="mt-8 sm:hidden"
     >
-      {/* Mini interview card */}
-      <div className="glass rounded-2xl overflow-hidden border border-white/8">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/6 bg-white/3">
-          <div className="flex items-center gap-1.5">
+      {/* ── Interview card ── */}
+      <div className="glass rounded-2xl overflow-hidden border border-white/10 shadow-glass-lg">
+
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 bg-white/[0.03]">
+          <div className="flex items-center gap-2">
             <motion.div
               animate={{ opacity: [1, 0.3, 1] }}
               transition={{ duration: 1.8, repeat: Infinity }}
-              className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+              className="w-2 h-2 rounded-full bg-emerald-400"
+              style={{ boxShadow: "0 0 6px 2px rgba(74,222,128,0.5)" }}
             />
-            <span className="text-[10px] text-slate-400 font-medium">Recruiter Interview</span>
+            <span className="text-xs font-semibold text-slate-300">Live Recruiter Interview</span>
           </div>
-          <div className="flex items-center gap-1 text-amber-400">
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            <span className="text-[10px] font-mono font-semibold tabular-nums">{formatTimer(timeLeft)}</span>
+          <div className="flex items-center gap-1.5 text-amber-400">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className={`text-xs font-mono font-bold tabular-nums ${timeLeft < 300 ? "text-red-400" : "text-amber-400"}`}>
+              {formatTimer(timeLeft)}
+            </span>
           </div>
         </div>
 
-        {/* Status row */}
-        <div className="px-4 py-4 flex items-center gap-4">
-          {/* Mini orb */}
-          <div className="relative w-12 h-12 flex items-center justify-center shrink-0">
-            <motion.div
-              className={`w-10 h-10 rounded-full ${phase === 0 ? "bg-gradient-to-br from-brand-500/70 to-violet-600/70" : "bg-gradient-to-br from-emerald-500/70 to-cyan-500/70"}`}
-              animate={{ scale: [1, 1.08, 1], boxShadow: phase === 0
-                ? ["0 0 12px 3px rgba(99,102,241,0.4)", "0 0 22px 6px rgba(99,102,241,0.55)", "0 0 12px 3px rgba(99,102,241,0.4)"]
-                : ["0 0 12px 3px rgba(52,211,153,0.4)", "0 0 22px 6px rgba(52,211,153,0.55)", "0 0 12px 3px rgba(52,211,153,0.4)"]
-              }}
-              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-            >
-              <div className="absolute inset-0 flex items-center justify-center gap-[2px]">
-                {[0, 1, 2].map((i) => (
-                  <motion.div key={i} className="w-[2.5px] rounded-full bg-white/70"
-                    animate={{ height: phase === 0 ? ["4px", "10px", "4px"] : ["5px", "13px", "5px"] }}
-                    transition={{ duration: phase === 0 ? 0.8 : 0.5, repeat: Infinity, delay: i * 0.1, ease: "easeInOut" }}
-                  />
-                ))}
-              </div>
-            </motion.div>
-          </div>
-
-          {/* Text */}
-          <div className="flex-1 min-w-0">
+        {/* Main body */}
+        <div className="px-4 py-5 space-y-4">
+          {/* Status + question */}
+          <div>
             <AnimatePresence mode="wait">
-              <motion.p
-                key={phase}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
+              <motion.div key={`status-${phase}-${qIdx}`}
+                initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.25 }}
-                className={`text-[10px] font-semibold mb-1 ${phase === 0 ? "text-brand-400" : "text-emerald-400"}`}
+                className="flex items-center gap-1.5 mb-2"
               >
-                {phase === 0 ? "Interviewer is speaking..." : "Listening to your answer..."}
+                {isAI ? (
+                  <span className="flex items-end gap-[3px]">
+                    {[0, 1, 2].map((i) => (
+                      <motion.span key={i} className="w-[3px] rounded-full bg-brand-400 inline-block"
+                        animate={{ height: ["6px", "13px", "6px"] }}
+                        transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }}
+                      />
+                    ))}
+                  </span>
+                ) : (
+                  <motion.span
+                    animate={{ scale: [1, 1.3, 1], opacity: [0.6, 1, 0.6] }}
+                    transition={{ duration: 0.9, repeat: Infinity }}
+                    className="w-2 h-2 rounded-full bg-emerald-400 inline-block"
+                    style={{ boxShadow: "0 0 6px 2px rgba(52,211,153,0.5)" }}
+                  />
+                )}
+                <span className={`text-xs font-semibold ${isAI ? "text-brand-400" : "text-emerald-400"}`}>
+                  {isAI ? "Interviewer is speaking..." : "Listening to your answer..."}
+                </span>
+              </motion.div>
+            </AnimatePresence>
+
+            <AnimatePresence mode="wait">
+              <motion.p key={`q-${qIdx}`}
+                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="text-sm font-semibold text-white leading-snug"
+              >
+                {isAI ? q.ai : q.user}
               </motion.p>
             </AnimatePresence>
-            <p className="text-xs text-white font-medium leading-snug line-clamp-2">
-              {phase === 0
-                ? "Tell me about a challenging project you've worked on."
-                : "At my internship, I built a real-time data pipeline..."}
-            </p>
+          </div>
+
+          {/* Orb — bigger than before */}
+          <div className="flex justify-center py-1">
+            <div className="relative flex items-center justify-center w-20 h-20">
+              {[1, 2].map((i) => (
+                <motion.div key={i}
+                  className={`absolute rounded-full border ${isAI ? "border-brand-400/25" : "border-emerald-400/30"}`}
+                  style={{ width: 34 + i * 18, height: 34 + i * 18 }}
+                  animate={{ scale: [1, 1.1 + i * 0.04, 1], opacity: [0.4, 0.65, 0.4] }}
+                  transition={{ duration: isAI ? 1.8 + i * 0.3 : 1.1 + i * 0.2, repeat: Infinity, ease: "easeInOut", delay: i * 0.2 }}
+                />
+              ))}
+              <motion.div
+                className={`w-11 h-11 rounded-full relative overflow-hidden ${isAI ? "bg-gradient-to-br from-brand-500/80 to-violet-600/80" : "bg-gradient-to-br from-emerald-500/80 to-cyan-500/80"}`}
+                animate={{
+                  scale: isAI ? [1, 1.06, 1] : [1, 1.1, 1.05, 1.12, 1],
+                  boxShadow: isAI
+                    ? ["0 0 18px 4px rgba(99,102,241,0.35)", "0 0 28px 8px rgba(99,102,241,0.5)", "0 0 18px 4px rgba(99,102,241,0.35)"]
+                    : ["0 0 18px 4px rgba(52,211,153,0.35)", "0 0 30px 8px rgba(52,211,153,0.5)", "0 0 18px 4px rgba(52,211,153,0.35)"],
+                }}
+                transition={{ duration: isAI ? 1.6 : 0.9, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-tr from-white/20 to-transparent" />
+                <div className="absolute inset-0 flex items-center justify-center gap-[2.5px]">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <motion.div key={i} className="w-[2.5px] rounded-full bg-white/75"
+                      animate={{ height: isAI ? ["4px", `${8 + i * 3}px`, "4px"] : ["5px", `${11 + i * 2}px`, "5px"] }}
+                      transition={{ duration: isAI ? 0.7 + i * 0.08 : 0.45 + i * 0.07, repeat: Infinity, ease: "easeInOut", delay: i * 0.07 }}
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            </div>
+          </div>
+
+          {/* Status pill */}
+          <div className="flex justify-center">
+            <AnimatePresence mode="wait">
+              <motion.div key={`pill-${phase}`}
+                initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.2 }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold border ${
+                  isAI ? "bg-slate-800/70 border-slate-700/60 text-slate-300" : "bg-emerald-600/15 border-emerald-500/35 text-emerald-300"
+                }`}
+              >
+                {isAI
+                  ? <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-9.536a5 5 0 000 7.072" /></svg>
+                  : <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                }
+                {isAI ? "AI speaking..." : "Listening..."}
+              </motion.div>
+            </AnimatePresence>
           </div>
         </div>
 
-        {/* Pill */}
-        <div className="px-4 pb-4 flex justify-center">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={`pill-${phase}`}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.2 }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-semibold border ${
-                phase === 0
-                  ? "bg-slate-800/60 border-slate-700/50 text-slate-400"
-                  : "bg-emerald-600/12 border-emerald-500/30 text-emerald-300"
-              }`}
-            >
-              {phase === 0
-                ? <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12" /></svg>
-                : <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
-              }
-              {phase === 0 ? "AI speaking..." : "Listening..."}
-            </motion.div>
-          </AnimatePresence>
+        {/* Footer */}
+        <div className="border-t border-white/6 px-4 py-2.5 flex items-center justify-center gap-2 text-[10px] text-slate-500">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          Live transcript
         </div>
       </div>
 
-      {/* Mini stat badges below the card */}
-      <div className="grid grid-cols-2 gap-2 mt-3">
+      {/* ── Score badges ── */}
+      <div className="grid grid-cols-2 gap-2.5 mt-3">
         {[
-          { label: "ATS Score", value: "87/100", color: "text-emerald-400", bg: "border-emerald-500/18 bg-emerald-500/6" },
-          { label: "Interview score", value: "9.2/10", color: "text-violet-400", bg: "border-violet-500/18 bg-violet-500/6" },
+          { label: "ATS Score",     value: "87/100",  color: "text-emerald-400", border: "border-emerald-500/20", glow: "rgba(16,185,129,0.08)" },
+          { label: "Interview Score", value: "92/100", color: "text-violet-400",  border: "border-violet-500/20",  glow: "rgba(139,92,246,0.08)" },
         ].map((s) => (
-          <div key={s.label} className={`glass rounded-xl px-3 py-2.5 border ${s.bg} text-center`}>
-            <p className={`font-display font-bold text-base ${s.color}`}>{s.value}</p>
-            <p className="text-[9px] text-slate-600 uppercase tracking-wide mt-0.5">{s.label}</p>
+          <div key={s.label} className={`rounded-xl border ${s.border} text-center py-3 px-2`}
+            style={{ background: s.glow }}>
+            <p className={`font-display font-bold text-lg ${s.color}`}>{s.value}</p>
+            <p className="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">{s.label}</p>
           </div>
         ))}
       </div>

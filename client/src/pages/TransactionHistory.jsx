@@ -328,36 +328,92 @@ export default function TransactionHistory() {
                     )}
                   </AnimatePresence>
 
-                  {/* ── Mobile card ── */}
-                  <div className="md:hidden px-4 py-4 border-b border-white/5">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  {/* ── Mobile card — tappable, expands to full details ── */}
+                  <div
+                    className="md:hidden px-4 py-4 border-b border-white/5 cursor-pointer active:bg-white/[0.03] transition-colors duration-150"
+                    onClick={() => setExpanded(isOpen ? null : t._id)}
+                  >
+                    {/* Row summary */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-base"
                           style={{ background: pm.bg, border: `1px solid ${pm.border}` }}>⚡</div>
-                        <div>
-                          <p className="text-white text-sm font-semibold">{t.metadata?.planLabel || pm.label + " Plan"}</p>
+                        <div className="min-w-0">
+                          <p className="text-white text-sm font-semibold truncate">{t.metadata?.planLabel || pm.label + " Plan"}</p>
                           <p className="text-slate-500 text-xs mt-0.5">{date} · {time}</p>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        {paid != null && <p className="text-white text-sm font-bold">₹{paid.toLocaleString("en-IN")}</p>}
-                        <p className="text-xs mt-0.5 font-semibold" style={{ color: pm.color }}>+{t.amount} credits</p>
+                      <div className="flex flex-col items-end gap-1.5 shrink-0">
+                        <div className="text-right">
+                          {paid != null && <p className="text-white text-sm font-bold">₹{paid.toLocaleString("en-IN")}</p>}
+                          <p className="text-xs font-semibold" style={{ color: pm.color }}>+{t.amount} credits</p>
+                        </div>
+                        {/* Expand chevron */}
+                        <svg
+                          className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
                       </div>
                     </div>
-                    <div className="space-y-1.5">
-                      {methodStr && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-600 uppercase tracking-wide w-20 shrink-0">Method</span>
-                          <span className="text-slate-300 text-xs">{methodStr}</span>
-                        </div>
+
+                    {/* Always-visible brief info */}
+                    {!isOpen && (
+                      <div className="mt-2.5 flex items-center gap-3 flex-wrap">
+                        {methodStr && <span className="text-slate-400 text-xs">{methodStr}</span>}
+                        {t.metadata?.razorpayPaymentId && (
+                          <span className="text-slate-600 text-[10px] font-mono">
+                            {t.metadata.razorpayPaymentId.slice(0, 12)}…
+                          </span>
+                        )}
+                        <span className="text-slate-600 text-[10px] ml-auto">Tap to expand</span>
+                      </div>
+                    )}
+
+                    {/* Expanded detail — only on mobile, inside the card */}
+                    <AnimatePresence>
+                      {isOpen && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                          className="overflow-hidden"
+                        >
+                          <div
+                            className="mt-4 pt-4 border-t border-white/8 space-y-4"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <p className="text-[10px] text-slate-600 uppercase tracking-widest font-bold">Full Transaction Details</p>
+                            <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+                              <DetailItem label="Status"         value={t.metadata?.paymentStatus} color="#10b981" />
+                              <DetailItem label="Source"         value={t.metadata?.source || "Direct"} />
+                              <DetailItem label="Balance Before" value={`${t.balanceBefore} credits`} />
+                              <DetailItem label="Balance After"  value={`${t.balanceAfter} credits`} color="#10b981" />
+                              {t.metadata?.planPrice && <DetailItem label="Listed Price" value={`₹${t.metadata.planPrice}`} />}
+                              {paid != null && <DetailItem label="Charged" value={`₹${paid.toLocaleString("en-IN")}`} color="#06b6d4" />}
+                            </div>
+                            {t.metadata?.razorpayPaymentId && (
+                              <div>
+                                <p className="text-[10px] text-slate-600 uppercase tracking-widest font-bold mb-1">Payment ID</p>
+                                <CopyPill value={t.metadata.razorpayPaymentId} truncLen={30} />
+                              </div>
+                            )}
+                            {t.metadata?.razorpayOrderId && (
+                              <div>
+                                <p className="text-[10px] text-slate-600 uppercase tracking-widest font-bold mb-1">Order ID</p>
+                                <CopyPill value={t.metadata.razorpayOrderId} truncLen={30} />
+                              </div>
+                            )}
+                            {methodStr && <DetailItem label="Payment Method" value={methodStr} />}
+                            {t.metadata?.vpa && <DetailItem label="UPI VPA" value={t.metadata.vpa} copy />}
+                            {t.metadata?.bank && <DetailItem label="Bank" value={t.metadata.bank} />}
+                            {t.metadata?.payerEmail && <DetailItem label="Payer Email" value={t.metadata.payerEmail} />}
+                          </div>
+                        </motion.div>
                       )}
-                      {t.metadata?.razorpayPaymentId && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-600 uppercase tracking-wide w-20 shrink-0">Payment ID</span>
-                          <CopyPill value={t.metadata.razorpayPaymentId} truncLen={20} />
-                        </div>
-                      )}
-                    </div>
+                    </AnimatePresence>
                   </div>
                 </motion.div>
               );
