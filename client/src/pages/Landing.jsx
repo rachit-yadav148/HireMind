@@ -186,8 +186,13 @@ function HeroInterviewDemo() {
   const round = DEMO_ROUNDS[roundIdx];
   const isAI = round.phase === "ai";
 
-  // Live countdown — ticks every real second regardless of phase
+  // Only run timers when the demo is actually visible on screen
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: false, margin: "0px 0px -80px 0px" });
+
+  // Live countdown — only ticks when visible
   useEffect(() => {
+    if (!inView) return;
     const id = setInterval(() => {
       setTimeLeft((t) => {
         if (t <= 0) { clearInterval(id); return 0; }
@@ -195,10 +200,11 @@ function HeroInterviewDemo() {
       });
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [inView]);
 
-  // Phase durations: AI speaking = 3.5s, user speaking = 7s (typing is ~24 chars/sec, longest answer ~155 chars)
+  // Phase durations: AI speaking = 3.5s, user speaking = 7s — only advances when visible
   useEffect(() => {
+    if (!inView) return;
     const dur = isAI ? 3500 : 7000;
     const t = setTimeout(() => {
       setRoundIdx((i) => {
@@ -208,10 +214,10 @@ function HeroInterviewDemo() {
       });
     }, dur);
     return () => clearTimeout(t);
-  }, [roundIdx, isAI]);
+  }, [roundIdx, isAI, inView]);
 
   return (
-    <div className="glass rounded-3xl overflow-hidden shadow-glass-lg border border-white/8 select-none">
+    <div ref={ref} className="glass rounded-3xl overflow-hidden shadow-glass-lg border border-white/8 select-none">
       {/* ── Top bar ── */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/6 bg-white/3">
         <div className="flex items-center gap-2">
@@ -370,22 +376,27 @@ function HeroInterviewDemo() {
 /* ─── Mobile hero visual — compact interview status cards (sm screens only) ─ */
 function MobileHeroVisual() {
   const [phase, setPhase] = useState(0); // 0 = AI speaking, 1 = Listening
-  const [timeLeft, setTimeLeft] = useState(DEMO_START_SECONDS - 42); // starts slightly later than desktop card
+  const [timeLeft, setTimeLeft] = useState(DEMO_START_SECONDS - 42);
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: false, margin: "0px 0px -40px 0px" });
 
   useEffect(() => {
+    if (!inView) return;
     const t = setInterval(() => setPhase((p) => 1 - p), 2800);
     return () => clearInterval(t);
-  }, []);
+  }, [inView]);
 
   useEffect(() => {
+    if (!inView) return;
     const id = setInterval(() => {
       setTimeLeft((t) => Math.max(0, t - 1));
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [inView]);
 
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.6, delay: 0.45, ease: [0.22, 1, 0.36, 1] }}
