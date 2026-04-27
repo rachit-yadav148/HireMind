@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../services/api";
 import { Filter } from "../components/Icons";
 
 const STATUSES = ["Applied", "Online Test", "Interview", "Offer", "Rejected"];
+
+const STATUS_CONFIG = {
+  Applied:       { color: "bg-blue-500/15 text-blue-300 border-blue-500/30",     dot: "bg-blue-400" },
+  "Online Test": { color: "bg-purple-500/15 text-purple-300 border-purple-500/30", dot: "bg-purple-400" },
+  Interview:     { color: "bg-amber-500/15 text-amber-300 border-amber-500/30",   dot: "bg-amber-400" },
+  Offer:         { color: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400" },
+  Rejected:      { color: "bg-red-500/15 text-red-300 border-red-500/30",         dot: "bg-red-400" },
+};
 
 function startOfDayMs(d) {
   const x = new Date(d);
@@ -10,7 +19,6 @@ function startOfDayMs(d) {
   return x.getTime();
 }
 
-/** Nearest calendar day to today first, then farther. */
 function sortByNearestEventDate(list) {
   const today = startOfDayMs(new Date());
   return [...list].sort((a, b) => {
@@ -44,14 +52,8 @@ export default function ApplicationTracker() {
   });
   const [editingNotesId, setEditingNotesId] = useState(null);
   const [editingDateId, setEditingDateId] = useState(null);
-
   const [filterOpen, setFilterOpen] = useState(false);
-  const [filters, setFilters] = useState({
-    status: "",
-    role: "",
-    dateFrom: "",
-    dateTo: "",
-  });
+  const [filters, setFilters] = useState({ status: "", role: "", dateFrom: "", dateTo: "" });
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
@@ -64,9 +66,7 @@ export default function ApplicationTracker() {
 
   const displayRows = useMemo(() => {
     let list = [...rows];
-    if (filters.status) {
-      list = list.filter((r) => r.status === filters.status);
-    }
+    if (filters.status) list = list.filter((r) => r.status === filters.status);
     if (filters.role.trim()) {
       const q = filters.role.trim().toLowerCase();
       list = list.filter((r) => r.role.toLowerCase().includes(q));
@@ -82,6 +82,14 @@ export default function ApplicationTracker() {
     return sortByNearestEventDate(list);
   }, [rows, filters]);
 
+  // Pipeline counts
+  const pipelineCounts = useMemo(() => {
+    const counts = {};
+    STATUSES.forEach((s) => { counts[s] = 0; });
+    rows.forEach((r) => { if (counts[r.status] !== undefined) counts[r.status]++; });
+    return counts;
+  }, [rows]);
+
   async function load() {
     setLoading(true);
     try {
@@ -95,21 +103,13 @@ export default function ApplicationTracker() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   async function handleAdd(e) {
     e.preventDefault();
     try {
       await api.post("/applications", form);
-      setForm({
-        company: "",
-        role: "",
-        status: "Applied",
-        date: new Date().toISOString().slice(0, 10),
-        notes: "",
-      });
+      setForm({ company: "", role: "", status: "Applied", date: new Date().toISOString().slice(0, 10), notes: "" });
       load();
     } catch (err) {
       setError(err.response?.data?.message || "Could not add");
@@ -150,93 +150,143 @@ export default function ApplicationTracker() {
   }
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="font-display text-3xl font-bold text-white">Application Tracker</h1>
-        <p className="text-slate-400 mt-1">Track roles, status, and notes in one place.</p>
-      </div>
-
-      {error && (
-        <div className="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm px-3 py-2 max-w-xl">
-          {error}
+    <div className="mx-auto w-full max-w-6xl pb-10">
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.38 }}
+        className="mb-6 rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6"
+      >
+        <div className="flex items-center gap-4 mb-5">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shrink-0">
+            <span className="text-xl">📊</span>
+          </div>
+          <div>
+            <h1 className="font-display text-2xl md:text-3xl font-bold text-white">Application Tracker</h1>
+            <p className="text-slate-400 mt-0.5 text-sm">Track roles, status, and notes in one place.</p>
+          </div>
         </div>
-      )}
 
-      <form
+        {/* Pipeline summary */}
+        {rows.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {STATUSES.map((s) => {
+              const cfg = STATUS_CONFIG[s];
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setFilters((f) => ({ ...f, status: f.status === s ? "" : s }))}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-all ${
+                    filters.status === s
+                      ? `${cfg.color} ring-1 ring-offset-0`
+                      : "border-slate-800 bg-slate-900/50 hover:border-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className={`inline-block w-2 h-2 rounded-full ${cfg.dot}`} />
+                    <span className="text-[11px] text-slate-400 font-medium truncate">{s}</span>
+                  </div>
+                  <span className="text-xl font-bold text-white">{pipelineCounts[s]}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
+
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            className="mb-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm px-4 py-3"
+          >
+            {error}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Add form */}
+      <motion.form
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
         onSubmit={handleAdd}
-        className="rounded-2xl border border-slate-800 bg-slate-900/40 p-6 mb-6 grid md:grid-cols-2 lg:grid-cols-6 gap-4 items-end"
+        className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 md:p-6 mb-5 grid md:grid-cols-2 lg:grid-cols-6 gap-4 items-end"
       >
         <div className="lg:col-span-2">
-          <label className="block text-xs text-slate-400 mb-1">Company</label>
+          <label className="block text-xs text-slate-400 mb-1.5">Company</label>
           <input
             required
             value={form.company}
             onChange={(e) => setForm({ ...form, company: e.target.value })}
-            className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+            placeholder="e.g. Google"
+            className="w-full rounded-xl bg-slate-900/80 border border-slate-700 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-brand-500/60 transition-colors"
           />
         </div>
         <div className="lg:col-span-2">
-          <label className="block text-xs text-slate-400 mb-1">Role</label>
+          <label className="block text-xs text-slate-400 mb-1.5">Role</label>
           <input
             required
             value={form.role}
             onChange={(e) => setForm({ ...form, role: e.target.value })}
-            className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+            placeholder="e.g. SWE Intern"
+            className="w-full rounded-xl bg-slate-900/80 border border-slate-700 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-brand-500/60 transition-colors"
           />
         </div>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Status</label>
+          <label className="block text-xs text-slate-400 mb-1.5">Status</label>
           <select
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value })}
-            className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+            className="w-full rounded-xl bg-slate-900/80 border border-slate-700 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500/60 transition-colors"
           >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
+            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Event Date</label>
+          <label className="block text-xs text-slate-400 mb-1.5">Event Date</label>
           <input
             type="date"
             value={form.date}
             onChange={(e) => setForm({ ...form, date: e.target.value })}
-            className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+            className="w-full rounded-xl bg-slate-900/80 border border-slate-700 px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500/60 transition-colors"
           />
         </div>
-        <div className="md:col-span-2 lg:col-span-6">
-          <label className="block text-xs text-slate-400 mb-1">Notes</label>
+        <div className="md:col-span-2 lg:col-span-5">
+          <label className="block text-xs text-slate-400 mb-1.5">Notes</label>
           <input
             value={form.notes}
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
-            placeholder="Optional"
+            placeholder="Optional notes"
+            className="w-full rounded-xl bg-slate-900/80 border border-slate-700 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-brand-500/60 transition-colors"
           />
         </div>
-        <div className="md:col-span-2 lg:col-span-6">
-          <button
+        <div>
+          <motion.button
             type="submit"
-            className="font-semibold bg-brand-500 hover:bg-brand-400 text-white px-5 py-2.5 rounded-xl"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+            className="w-full font-semibold bg-gradient-to-r from-brand-500 to-violet-500 hover:from-brand-400 hover:to-violet-400 text-white px-5 py-2.5 rounded-xl text-sm shadow-lg transition-shadow"
           >
-            Add application
-          </button>
+            + Add
+          </motion.button>
         </div>
-      </form>
+      </motion.form>
 
+      {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <button
           type="button"
           onClick={() => setFilterOpen((o) => !o)}
-          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium border transition-colors ${
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium border transition-colors ${
             filterOpen || activeFilterCount > 0
               ? "bg-brand-500/15 border-brand-500/40 text-brand-200"
               : "bg-slate-900/60 border-slate-700 text-slate-300 hover:border-slate-600"
           }`}
-          aria-expanded={filterOpen}
-          aria-label="Toggle filters"
         >
           <Filter className="w-4 h-4 shrink-0" />
           Filters
@@ -255,167 +305,179 @@ export default function ApplicationTracker() {
             Clear filters
           </button>
         )}
+        {displayRows.length > 0 && (
+          <span className="text-xs text-slate-600 ml-auto">{displayRows.length} application{displayRows.length !== 1 ? "s" : ""}</span>
+        )}
       </div>
 
-      {filterOpen && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 mb-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Status</label>
-            <select
-              value={filters.status}
-              onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
-            >
-              <option value="">All statuses</option>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Role contains</label>
-            <input
-              type="search"
-              value={filters.role}
-              onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}
-              placeholder="e.g. Engineer"
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Event date from</label>
-            <input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Event date to</label>
-            <input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
-            />
-          </div>
-          <p className="sm:col-span-2 lg:col-span-4 text-xs text-slate-500">
-            Only rows matching every active filter are shown. Order stays: closest event day to today
-            first.
-          </p>
-        </div>
-      )}
+      <AnimatePresence>
+        {filterOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden mb-4"
+          >
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Status</label>
+                <select
+                  value={filters.status}
+                  onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+                  className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-white"
+                >
+                  <option value="">All statuses</option>
+                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Role contains</label>
+                <input
+                  type="search"
+                  value={filters.role}
+                  onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}
+                  placeholder="e.g. Engineer"
+                  className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-white placeholder:text-slate-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Event date from</label>
+                <input
+                  type="date"
+                  value={filters.dateFrom}
+                  onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
+                  className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Event date to</label>
+                <input
+                  type="date"
+                  value={filters.dateTo}
+                  onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
+                  className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-white"
+                />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <div className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/30">
+      {/* Table */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.18 }}
+        className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-900/30"
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-slate-900/80 text-slate-400 uppercase text-xs">
+            <thead className="bg-slate-900/80 border-b border-slate-800">
               <tr>
-                <th className="px-4 py-3">Company</th>
-                <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Event Date</th>
-                <th className="px-4 py-3">Notes</th>
-                <th className="px-4 py-3 w-28">Actions</th>
+                {["Company", "Role", "Status", "Event Date", "Notes", "Actions"].map((h) => (
+                  <th key={h} className="px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-800/80">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                    Loading…
+                  <td colSpan={6} className="px-4 py-10 text-center">
+                    <div className="flex items-center justify-center gap-2 text-slate-500 text-sm">
+                      <div className="h-4 w-4 border-2 border-slate-600 border-t-brand-400 rounded-full animate-spin" />
+                      Loading applications…
+                    </div>
                   </td>
                 </tr>
               ) : displayRows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-12 text-center text-slate-500 text-sm">
                     {rows.length === 0
-                      ? "No applications yet. Add one above."
+                      ? "No applications yet — add your first one above 👆"
                       : "No applications match the current filters."}
                   </td>
                 </tr>
               ) : (
-                displayRows.map((r) => (
-                  <tr key={r._id} className="hover:bg-slate-800/30">
-                    <td className="px-4 py-3 text-white font-medium">{r.company}</td>
-                    <td className="px-4 py-3 text-slate-300">{r.role}</td>
-                    <td className="px-4 py-3">
-                      <select
-                        value={r.status}
-                        onChange={(e) => updateStatus(r._id, e.target.value)}
-                        className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white max-w-[140px]"
-                      >
-                        {STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 tabular-nums min-w-[140px]">
-                      {editingDateId === r._id ? (
-                        <DateEditor
-                          initial={toInputDate(r.date)}
-                          onSave={(d) => updateEventDate(r._id, d)}
-                          onCancel={() => setEditingDateId(null)}
-                        />
-                      ) : (
+                displayRows.map((r, idx) => {
+                  const cfg = STATUS_CONFIG[r.status] || STATUS_CONFIG["Applied"];
+                  return (
+                    <motion.tr
+                      key={r._id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: idx * 0.03 }}
+                      className="hover:bg-slate-800/30 transition-colors"
+                    >
+                      <td className="px-4 py-3.5 text-white font-semibold">{r.company}</td>
+                      <td className="px-4 py-3.5 text-slate-300 max-w-[180px] truncate">{r.role}</td>
+                      <td className="px-4 py-3.5">
+                        <select
+                          value={r.status}
+                          onChange={(e) => updateStatus(r._id, e.target.value)}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-semibold cursor-pointer ${cfg.color}`}
+                          style={{ background: "transparent" }}
+                        >
+                          {STATUSES.map((s) => <option key={s} value={s} className="bg-slate-900 text-white">{s}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-400 tabular-nums min-w-[130px]">
+                        {editingDateId === r._id ? (
+                          <DateEditor
+                            initial={toInputDate(r.date)}
+                            onSave={(d) => updateEventDate(r._id, d)}
+                            onCancel={() => setEditingDateId(null)}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => { setEditingDateId(r._id); setEditingNotesId(null); }}
+                            className="text-left text-brand-400 hover:text-brand-300 hover:underline underline-offset-2 text-sm"
+                          >
+                            {r.date ? new Date(r.date).toLocaleDateString() : "—"}
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-500 max-w-[200px] truncate">
+                        {editingNotesId === r._id ? (
+                          <NotesEditor
+                            initial={r.notes}
+                            onSave={async (notes) => {
+                              await api.patch(`/applications/${r._id}`, { notes });
+                              setEditingNotesId(null);
+                              load();
+                            }}
+                            onCancel={() => setEditingNotesId(null)}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => { setEditingNotesId(r._id); setEditingDateId(null); }}
+                            className="text-left text-slate-500 hover:text-brand-300 truncate max-w-full text-sm transition-colors"
+                          >
+                            {r.notes || <span className="text-slate-700 italic">add notes…</span>}
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5">
                         <button
                           type="button"
-                          onClick={() => {
-                            setEditingDateId(r._id);
-                            setEditingNotesId(null);
-                          }}
-                          className="text-left text-brand-400 hover:text-brand-300 hover:underline"
-                          title="Edit event date"
+                          onClick={() => handleDelete(r._id)}
+                          className="text-slate-600 hover:text-red-400 text-xs font-medium transition-colors"
                         >
-                          {r.date ? new Date(r.date).toLocaleDateString() : "—"}
+                          Delete
                         </button>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 max-w-xs truncate" title={r.notes}>
-                      {editingNotesId === r._id ? (
-                        <NotesEditor
-                          initial={r.notes}
-                          onSave={async (notes) => {
-                            await api.patch(`/applications/${r._id}`, { notes });
-                            setEditingNotesId(null);
-                            load();
-                          }}
-                          onCancel={() => setEditingNotesId(null)}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingNotesId(r._id);
-                            setEditingDateId(null);
-                          }}
-                          className="text-left text-brand-400 hover:text-brand-300 truncate max-w-full"
-                        >
-                          {r.notes || "—"}
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(r._id)}
-                        className="text-red-400 hover:text-red-300 text-xs font-medium"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                    </motion.tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -428,20 +490,11 @@ function DateEditor({ initial, onSave, onCancel }) {
         type="date"
         value={v}
         onChange={(e) => setV(e.target.value)}
-        className="w-full min-w-[130px] bg-slate-950 border border-slate-600 rounded px-2 py-1 text-xs text-white"
+        className="w-full min-w-[130px] bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white"
       />
       <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => v && onSave(v)}
-          disabled={!v}
-          className="text-xs text-brand-400 disabled:opacity-40"
-        >
-          Save
-        </button>
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          Cancel
-        </button>
+        <button type="button" onClick={() => v && onSave(v)} disabled={!v} className="text-xs text-brand-400 disabled:opacity-40">Save</button>
+        <button type="button" onClick={onCancel} className="text-xs text-slate-500">Cancel</button>
       </div>
     </div>
   );
@@ -454,15 +507,11 @@ function NotesEditor({ initial, onSave, onCancel }) {
       <input
         value={v}
         onChange={(e) => setV(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-600 rounded px-2 py-1 text-xs text-white"
+        className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white"
       />
       <div className="flex gap-2">
-        <button type="button" onClick={() => onSave(v)} className="text-xs text-brand-400">
-          Save
-        </button>
-        <button type="button" onClick={onCancel} className="text-xs text-slate-500">
-          Cancel
-        </button>
+        <button type="button" onClick={() => onSave(v)} className="text-xs text-brand-400">Save</button>
+        <button type="button" onClick={onCancel} className="text-xs text-slate-500">Cancel</button>
       </div>
     </div>
   );

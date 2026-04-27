@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => {
             if (id.includes("node_modules/lucide-react"))  return "vendor-lucide";
             if (id.includes("node_modules/posthog-js"))    return "vendor-posthog";
             if (id.includes("node_modules/axios"))         return "vendor-axios";
+            if (id.includes("node_modules/@mediapipe"))    return "vendor-mediapipe";
 
             // ── Page-level splits (lazy-loaded on navigation) ─────────────
             if (id.includes("src/pages/Landing"))              return "page-landing";

@@ -38,6 +38,8 @@ export default function RecruiterInterviewUI({
   const [showTranscript, setShowTranscript] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [ended, setEnded] = useState(false);
+  /** SR must not start until the first TTS greeting finishes — otherwise the mic picks up the AI voice */
+  const [openingDone, setOpeningDone] = useState(false);
   const greetingSpokenRef = useRef(false);
 
   const inactivityTimerRef = useRef(null);
@@ -192,26 +194,31 @@ export default function RecruiterInterviewUI({
   }
 
   // ─── Greeting ───
-  // Using a ref instead of state so setGreetingSpoken doesn't trigger a
-  // re-render that would cancel the setTimeout via effect cleanup.
   useEffect(() => {
-    if (!initialAiMessage || !micReady || greetingSpokenRef.current) return;
-    greetingSpokenRef.current = true;   // ref update — no re-render, timer survives
+    if (!micReady) return;
+
+    if (!initialAiMessage?.trim()) {
+      setOpeningDone(true);
+      return;
+    }
+
+    if (greetingSpokenRef.current) return;
+    greetingSpokenRef.current = true;
+
     setCurrentAiText(initialAiMessage);
     setMessages([{ role: "interviewer", text: initialAiMessage, t: Date.now() }]);
 
-    // #region agent log
-    fetch('/api/debug-log-244377',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'244377',location:'RecruiterInterviewUI:greeting-will-speak',message:'GREETING SCHEDULING SPEAKTEXT',data:{textLen:initialAiMessage.length,textStart:initialAiMessage.slice(0,80)},timestamp:Date.now(),hypothesisId:'H-A2-fix'})}).catch(()=>{});
-    // #endregion
-
     const timer = setTimeout(() => {
-      // #region agent log
-      fetch('/api/debug-log-244377',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'244377',location:'RecruiterInterviewUI:greeting-timeout-fired',message:'150ms TIMER FIRED',data:{synthSpeaking:window.speechSynthesis?.speaking,synthPending:window.speechSynthesis?.pending},timestamp:Date.now(),hypothesisId:'H-A2-fix'})}).catch(()=>{});
-      // #endregion
-      speakText(initialAiMessage, () => startInactivityTimer());
+      speakText(initialAiMessage, () => {
+        setOpeningDone(true);
+        startInactivityTimer();
+      });
     }, 150);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      greetingSpokenRef.current = false;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialAiMessage, micReady, speakText]);
 
@@ -291,6 +298,19 @@ export default function RecruiterInterviewUI({
         userMessage: userText,
         candidateName,
       });
+
+      if (data.interviewEnded) {
+        setMessages((m) => [
+          ...m,
+          { role: "interviewer", text: data.aiMessage, t: Date.now(), conductEnd: true },
+        ]);
+        setCurrentAiText(data.aiMessage);
+        speakText(data.aiMessage, () => {
+          void handleEndInterview(true);
+        });
+        return;
+      }
+
       setMessages((m) => [...m, { role: "interviewer", text: data.aiMessage, t: Date.now() }]);
       setCurrentAiText(data.aiMessage);
       speakText(data.aiMessage, () => startInactivityTimer());
@@ -305,10 +325,10 @@ export default function RecruiterInterviewUI({
     }
   }, [sessionId, candidateName, loading, speakText, startInactivityTimer]);
 
-  // Mic is always enabled once micReady — speakText pauses/resumes it around AI speech
+  // Mic starts only after opening greeting TTS completes — avoids SR capturing AI audio
   const { listening, transcript, error: micError, stream, pause: micPause, resume: micResume } =
     useAlwaysOnMic({
-      enabled: micReady && micEnabled && !ended,
+      enabled: micReady && micEnabled && !ended && openingDone,
       onSilenceEnd: handleSilenceEnd,
       onSpeechActivity: handleSpeechActivity,
     });
@@ -437,7 +457,7 @@ export default function RecruiterInterviewUI({
             }`}
           >
             {micEnabled && listening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-            {isSpeaking ? "AI speaking..." : micEnabled && listening ? "Listening..." : "Mic off"}
+            {isSpeaking ? "AI speaking..." : openingDone && micEnabled && listening ? "Listening..." : openingDone ? "Mic off" : "Getting ready..."}
           </button>
         </div>
 

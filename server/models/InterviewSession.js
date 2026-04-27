@@ -28,6 +28,8 @@ const interviewSessionSchema = new mongoose.Schema(
       enum: ["in_progress", "completed"],
       default: "in_progress",
     },
+    conductAbuseCount: { type: Number, default: 0 },
+    conductOffTopicCount: { type: Number, default: 0 },
     currentStage: {
       type: String,
       enum: ["technical", "behavioral", "hr"],

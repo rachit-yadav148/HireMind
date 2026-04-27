@@ -7,7 +7,7 @@
  * Example:
  *   node scripts/grantCredits.js user@example.com monthly
  *
- * Valid planIds: monthly (300), quarterly (1000), half_yearly (2200), yearly (5000)
+ * Valid planIds: monthly (300), quarterly (1000), half_yearly (2200), yearly (5000), unlimited_monthly
  */
 
 import "dotenv/config";
@@ -18,6 +18,7 @@ const PLANS = {
   quarterly:   { credits: 1000, label: "Quarterly Plan",   durationMonths: 3  },
   half_yearly: { credits: 2200, label: "Half-Yearly Plan", durationMonths: 6  },
   yearly:      { credits: 5000, label: "Yearly Plan",      durationMonths: 12 },
+  unlimited_monthly: { credits: 0, label: "Unlimited Monthly", durationMonths: 1 },
 };
 
 async function main() {
@@ -60,27 +61,37 @@ async function main() {
   const endDate = new Date(now);
   endDate.setMonth(endDate.getMonth() + plan.durationMonths);
 
+  const updateDoc = {
+    $set: {
+      subscriptionType: planId,
+      subscriptionStatus: "active",
+      subscriptionStartDate: now,
+      subscriptionEndDate: endDate,
+      lastCreditUpdate: now,
+    },
+  };
+
+  if (planId === "unlimited_monthly") {
+    const resetAt = new Date(now);
+    resetAt.setMonth(resetAt.getMonth() + 1);
+    updateDoc.$set.unlimitedMonthlyUsed = 0;
+    updateDoc.$set.unlimitedMonthlyResetAt = resetAt;
+  } else {
+    updateDoc.$inc = { credits: plan.credits, totalCreditsEarned: plan.credits };
+  }
+
   const result = await UserCredit.findOneAndUpdate(
     { userId: user._id },
-    {
-      $inc: { credits: plan.credits, totalCreditsEarned: plan.credits },
-      $set: {
-        subscriptionType: planId,
-        subscriptionStatus: "active",
-        subscriptionStartDate: now,
-        subscriptionEndDate: endDate,
-        lastCreditUpdate: now,
-      },
-    },
+    updateDoc,
     { returnDocument: "after" }
   );
 
   if (!result) {
     console.error("No UserCredit document found. Creating one...");
-    await UserCredit.insertOne({
+    const doc = {
       userId: user._id,
-      credits: plan.credits + 38, // 38 free + plan credits
-      totalCreditsEarned: plan.credits + 38,
+      credits: planId === "unlimited_monthly" ? 38 : plan.credits + 38, // preserve baseline credits for unlimited plan
+      totalCreditsEarned: planId === "unlimited_monthly" ? 38 : plan.credits + 38,
       totalCreditsSpent: 0,
       subscriptionType: planId,
       subscriptionStatus: "active",
@@ -89,11 +100,30 @@ async function main() {
       lastCreditUpdate: now,
       createdAt: now,
       updatedAt: now,
-    });
-    console.log(`Created UserCredit with ${plan.credits + 38} credits`);
+    };
+
+    if (planId === "unlimited_monthly") {
+      const resetAt = new Date(now);
+      resetAt.setMonth(resetAt.getMonth() + 1);
+      doc.unlimitedMonthlyUsed = 0;
+      doc.unlimitedMonthlyResetAt = resetAt;
+    }
+
+    await UserCredit.insertOne(doc);
+    console.log(
+      planId === "unlimited_monthly"
+        ? "Created UserCredit with Unlimited Monthly subscription"
+        : `Created UserCredit with ${plan.credits + 38} credits`
+    );
   } else {
-    console.log(`Updated! New balance: ${result.credits} credits`);
-    console.log(`Subscription: ${planId} until ${endDate.toISOString()}`);
+    console.log(
+      planId === "unlimited_monthly"
+        ? `Updated! Subscription: unlimited_monthly until ${endDate.toISOString()} (cap-backed unlimited active)`
+        : `Updated! New balance: ${result.credits} credits`
+    );
+    if (planId !== "unlimited_monthly") {
+      console.log(`Subscription: ${planId} until ${endDate.toISOString()}`);
+    }
   }
 
   await mongoose.disconnect();

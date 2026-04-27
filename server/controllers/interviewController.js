@@ -4,6 +4,11 @@ import InterviewSession from "../models/InterviewSession.js";
 import ResumeModel from "../models/Resume.js";
 import FreeTrialUsage from "../models/FreeTrialUsage.js";
 import * as gemini from "../services/geminiService.js";
+import {
+  detectAbusiveLanguage,
+  CONDUCT_MESSAGES,
+  buildConductTerminationReport,
+} from "../services/interviewConductModeration.js";
 
 const TOTAL_QUESTIONS = 10;
 const FREE_INTERVIEW_LIMIT_SECONDS = 180;
@@ -124,6 +129,48 @@ function buildNoAnswerReport() {
     confidenceScore: 0,
     suggestions: ["No valid answers were submitted. Submit at least one complete answer to receive a score."],
   };
+}
+
+function getLatestInterviewerQuestion(session) {
+  const t = session.transcript || [];
+  for (let i = t.length - 1; i >= 0; i--) {
+    const q = t[i]?.question;
+    if (q && String(q).trim()) return String(q).trim();
+  }
+  return "";
+}
+
+function pushConversationalExchange(session, userMsg, aiMsg) {
+  const lastEntry = session.transcript[session.transcript.length - 1];
+  if (lastEntry && !lastEntry.answer) {
+    lastEntry.answer = userMsg;
+  } else {
+    session.transcript.push({
+      stage: session.currentStage || "technical",
+      question: "",
+      answer: userMsg,
+      feedback: "",
+    });
+  }
+  session.transcript.push({
+    stage: session.currentStage || "technical",
+    question: aiMsg,
+    answer: "",
+    feedback: "",
+  });
+}
+
+function applyConductTermination(session, reason) {
+  const report = buildConductTerminationReport(reason);
+  session.feedback = report;
+  session.score = {
+    interviewScore: report.interviewScore,
+    communication: report.communicationScore,
+    technicalDepth: report.technicalDepth,
+    confidence: report.confidenceScore,
+    suggestions: report.suggestions,
+  };
+  session.status = "completed";
 }
 
 async function upsertTrialUsage(trialId) {
@@ -286,8 +333,110 @@ export async function submitAnswer(req, res) {
 
     const stage = session.currentStage;
     const resumeText = session.resumeContext || (await getResumeSnippet(req.userId));
+    const answerTrimmed = String(answer || "").trim();
 
-    const evaluation = await gemini.evaluateInterviewAnswer(question, answer || "", {
+    if (answerTrimmed && detectAbusiveLanguage(answerTrimmed)) {
+      session.conductAbuseCount = (session.conductAbuseCount || 0) + 1;
+      if (session.conductAbuseCount === 1) {
+        session.transcript.push({
+          stage,
+          question,
+          answer: answerTrimmed,
+          feedback: "[Conduct reminder — inappropriate language]",
+        });
+        await session.save();
+        await syncTrialInterviewSeconds(session.trialId, session);
+        return res.json({
+          feedback: "",
+          conductWarning: true,
+          interviewerPrompt: CONDUCT_MESSAGES.abuseWarning,
+          completed: false,
+        });
+      }
+      session.transcript.push({
+        stage,
+        question,
+        answer: answerTrimmed,
+        feedback: "[Interview ended — inappropriate language]",
+      });
+      applyConductTermination(session, "abuse");
+      await session.save();
+      await syncTrialInterviewSeconds(session.trialId, session);
+      const report = session.feedback;
+      return res.json({
+        completed: true,
+        conductTermination: true,
+        closingMessage: CONDUCT_MESSAGES.abuseTerminated,
+        report: {
+          interviewScore: report.interviewScore,
+          communicationScore: report.communicationScore,
+          technicalDepth: report.technicalDepth,
+          confidenceScore: report.confidenceScore,
+          suggestions: report.suggestions,
+        },
+      });
+    }
+
+    if (answerTrimmed) {
+      let offTopic = false;
+      try {
+        const cls = await gemini.classifyOffTopicInterviewTurn(answerTrimmed, {
+          company: session.company,
+          role: session.role,
+          lastInterviewerPrompt: question,
+          mode: "practice",
+        });
+        offTopic = cls.offTopic === true;
+      } catch (e) {
+        console.error("classifyOffTopicInterviewTurn failed:", e);
+        offTopic = false;
+      }
+
+      if (offTopic) {
+        session.conductOffTopicCount = (session.conductOffTopicCount || 0) + 1;
+        const n = session.conductOffTopicCount;
+        if (n <= 3) {
+          session.transcript.push({
+            stage,
+            question,
+            answer: answerTrimmed,
+            feedback: "[Conduct reminder — off-topic]",
+          });
+          await session.save();
+          await syncTrialInterviewSeconds(session.trialId, session);
+          return res.json({
+            feedback: "",
+            conductWarning: true,
+            interviewerPrompt: CONDUCT_MESSAGES.offTopicWarnings[n - 1],
+            completed: false,
+          });
+        }
+        session.transcript.push({
+          stage,
+          question,
+          answer: answerTrimmed,
+          feedback: "[Interview ended — repeated off-topic behaviour]",
+        });
+        applyConductTermination(session, "off_topic");
+        await session.save();
+        await syncTrialInterviewSeconds(session.trialId, session);
+        const report = session.feedback;
+        return res.json({
+          completed: true,
+          conductTermination: true,
+          closingMessage: CONDUCT_MESSAGES.offTopicTerminated,
+          report: {
+            interviewScore: report.interviewScore,
+            communicationScore: report.communicationScore,
+            technicalDepth: report.technicalDepth,
+            confidenceScore: report.confidenceScore,
+            suggestions: report.suggestions,
+          },
+        });
+      }
+    }
+
+    const evaluation = await gemini.evaluateInterviewAnswer(question, answerTrimmed, {
       company: session.company,
       role: session.role,
       stage,
@@ -298,7 +447,7 @@ export async function submitAnswer(req, res) {
     session.transcript.push({
       stage,
       question,
-      answer: answer || "",
+      answer: answerTrimmed,
       feedback: evaluation.feedback,
     });
 
@@ -434,9 +583,14 @@ export async function endInterview(req, res) {
 
 export async function converseInterview(req, res) {
   try {
-    const { sessionId, userMessage } = req.body;
+    const { sessionId } = req.body;
+    const userMessage = String(req.body.userMessage || "").trim();
+
     if (!sessionId) {
       return res.status(400).json({ message: "sessionId is required" });
+    }
+    if (!userMessage) {
+      return res.status(400).json({ message: "userMessage is required" });
     }
 
     const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId, req.trialId));
@@ -453,25 +607,94 @@ export async function converseInterview(req, res) {
       });
     }
 
-    // Build conversation history from transcript
-    const conversationHistory = [];
-    for (const entry of session.transcript) {
-      if (entry.question) conversationHistory.push({ role: "interviewer", text: entry.question });
-      if (entry.answer) conversationHistory.push({ role: "candidate", text: entry.answer });
-    }
-
-    // Add the new user message
-    if (userMessage && userMessage.trim()) {
-      conversationHistory.push({ role: "candidate", text: userMessage.trim() });
-    }
-
-    // Get the candidate's name from user record or request
     let candidateName = req.body.candidateName || "";
     if (!candidateName && req.userId) {
       const User = (await import("../models/User.js")).default;
       const user = await User.findById(req.userId).select("name").lean();
       candidateName = user?.name || "";
     }
+
+    const lastInterviewerPrompt = getLatestInterviewerQuestion(session);
+
+    if (detectAbusiveLanguage(userMessage)) {
+      session.conductAbuseCount = (session.conductAbuseCount || 0) + 1;
+      if (session.conductAbuseCount === 1) {
+        const aiResponse = CONDUCT_MESSAGES.abuseWarning;
+        pushConversationalExchange(session, userMessage, aiResponse);
+        const questionCount = session.transcript.filter((t) => t.question).length;
+        await session.save();
+        await syncTrialInterviewSeconds(session.trialId, session);
+        return res.json({
+          aiMessage: aiResponse,
+          questionCount,
+          conductWarning: true,
+          conductType: "abuse",
+        });
+      }
+      const aiResponse = CONDUCT_MESSAGES.abuseTerminated;
+      pushConversationalExchange(session, userMessage, aiResponse);
+      applyConductTermination(session, "abuse");
+      const questionCount = session.transcript.filter((t) => t.question).length;
+      await session.save();
+      await syncTrialInterviewSeconds(session.trialId, session);
+      return res.json({
+        aiMessage: aiResponse,
+        questionCount,
+        interviewEnded: true,
+        endedReason: "conduct_abuse",
+      });
+    }
+
+    let offTopic = false;
+    try {
+      const cls = await gemini.classifyOffTopicInterviewTurn(userMessage, {
+        company: session.company,
+        role: session.role,
+        lastInterviewerPrompt,
+        mode: session.mode || "recruiter",
+      });
+      offTopic = cls.offTopic === true;
+    } catch (e) {
+      console.error("classifyOffTopicInterviewTurn failed:", e);
+      offTopic = false;
+    }
+
+    if (offTopic) {
+      session.conductOffTopicCount = (session.conductOffTopicCount || 0) + 1;
+      const n = session.conductOffTopicCount;
+      if (n <= 3) {
+        const aiResponse = CONDUCT_MESSAGES.offTopicWarnings[n - 1];
+        pushConversationalExchange(session, userMessage, aiResponse);
+        const questionCount = session.transcript.filter((t) => t.question).length;
+        await session.save();
+        await syncTrialInterviewSeconds(session.trialId, session);
+        return res.json({
+          aiMessage: aiResponse,
+          questionCount,
+          conductWarning: true,
+          conductType: "off_topic",
+        });
+      }
+      const aiResponse = CONDUCT_MESSAGES.offTopicTerminated;
+      pushConversationalExchange(session, userMessage, aiResponse);
+      applyConductTermination(session, "off_topic");
+      const questionCount = session.transcript.filter((t) => t.question).length;
+      await session.save();
+      await syncTrialInterviewSeconds(session.trialId, session);
+      return res.json({
+        aiMessage: aiResponse,
+        questionCount,
+        interviewEnded: true,
+        endedReason: "conduct_off_topic",
+      });
+    }
+
+    const conversationHistory = [];
+    for (const entry of session.transcript) {
+      if (entry.question) conversationHistory.push({ role: "interviewer", text: entry.question });
+      if (entry.answer) conversationHistory.push({ role: "candidate", text: entry.answer });
+    }
+    conversationHistory.push({ role: "candidate", text: userMessage });
 
     let aiResponse = await gemini.generateConversationalResponse(conversationHistory, {
       company: session.company,
@@ -482,38 +705,9 @@ export async function converseInterview(req, res) {
       mode: session.mode,
     });
 
-    // #region agent log
-    const _rawResp = aiResponse;
-    // #endregion
-    // Sanitize: strip incomplete trailing sentences (em dash, ellipsis, dangling comma)
     aiResponse = aiResponse.replace(/[\u2014\u2013—–,]\s*$/, ".").replace(/\.{2,}\s*$/, ".").trim();
-    // #region agent log
-    try { fs.appendFileSync('/Users/rachit/Desktop/HireMind/.cursor/debug-244377.log', JSON.stringify({sessionId:'244377',location:'interviewController:converseInterview',message:'AI RESPONSE',data:{rawLen:_rawResp.length,sanitizedLen:aiResponse.length,raw:_rawResp.slice(0,500),sanitized:aiResponse.slice(0,500),endsCleanly:/[.?!]$/.test(aiResponse.trim()),changed:_rawResp!==aiResponse},timestamp:Date.now(),hypothesisId:'H-C'})+'\n'); } catch(_e){}
-    // #endregion
 
-    // Save to transcript: store the user's message as an answer and AI's response as the next question
-    if (userMessage && userMessage.trim()) {
-      // Append user answer to the last transcript entry or create new
-      const lastEntry = session.transcript[session.transcript.length - 1];
-      if (lastEntry && !lastEntry.answer) {
-        lastEntry.answer = userMessage.trim();
-      } else {
-        session.transcript.push({
-          stage: session.currentStage || "technical",
-          question: "",
-          answer: userMessage.trim(),
-          feedback: "",
-        });
-      }
-    }
-
-    // Add AI response as the next question entry
-    session.transcript.push({
-      stage: session.currentStage || "technical",
-      question: aiResponse,
-      answer: "",
-      feedback: "",
-    });
+    pushConversationalExchange(session, userMessage, aiResponse);
 
     const questionCount = session.transcript.filter((t) => t.question).length;
 
