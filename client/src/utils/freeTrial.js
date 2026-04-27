@@ -4,6 +4,75 @@ export const FREE_INTERVIEW_TRIAL_USED_KEY = "free_interview_trial_used";
 export const FREE_TRIAL_SIGNUP_TRACKED_KEY = "user_signed_up_after_trying_free_tracked";
 export const FREE_TRIAL_ID_KEY = "hm_trial_id";
 
+// ---------------------------------------------------------------------------
+// Device fingerprinting — stable across incognito and localStorage clears
+// Uses canvas rendering + device properties; does NOT rely on storage
+// ---------------------------------------------------------------------------
+
+function _murmurhash2(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, "0");
+}
+
+function _canvasToken() {
+  try {
+    const c = document.createElement("canvas");
+    c.width = 240;
+    c.height = 60;
+    const g = c.getContext("2d");
+    g.textBaseline = "alphabetic";
+    g.fillStyle = "#f60";
+    g.fillRect(100, 5, 80, 30);
+    g.fillStyle = "#069";
+    g.font = "bold 15px Arial,sans-serif";
+    g.fillText("HM trial \u2764\ufe0f", 5, 30);
+    g.fillStyle = "rgba(102,204,0,0.8)";
+    g.font = "13px Georgia,serif";
+    g.fillText("HM trial \u2764\ufe0f", 7, 32);
+    return c.toDataURL().slice(-80);
+  } catch {
+    return "";
+  }
+}
+
+export function getDeviceFingerprint() {
+  if (typeof window === "undefined") return "";
+  try {
+    const nav = window.navigator;
+    const scr = window.screen;
+    const tz = (() => {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ""; }
+    })();
+    const parts = [
+      nav.userAgent || "",
+      nav.language || "",
+      (nav.languages || []).join(","),
+      String(nav.hardwareConcurrency || 0),
+      String(nav.deviceMemory || 0),
+      nav.platform || "",
+      String(scr.width),
+      String(scr.height),
+      String(scr.colorDepth),
+      String(scr.pixelDepth || 0),
+      tz,
+      String(new Date().getTimezoneOffset()),
+      _canvasToken(),
+    ];
+    return "dfp_" + _murmurhash2(parts.join("|||"));
+  } catch {
+    return "";
+  }
+}
+
 export const FREE_RESUME_ANALYSIS_LIMIT = 1;
 export const FREE_INTERVIEW_LIMIT_SECONDS = 180;
 

@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -94,6 +95,17 @@ app.use("/api/credits", creditRoutes);
 app.use("/api/payments", paymentRoutes);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, name: "HireMind API" }));
+
+// #region agent log endpoint
+app.post("/api/debug-log-244377", (req, res) => {
+  try {
+    fs.appendFileSync("/Users/rachit/Desktop/HireMind/.cursor/debug-244377.log", JSON.stringify(req.body) + "\n");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+// #endregion
 
 app.use((err, _req, res, _next) => {
   console.error(err);

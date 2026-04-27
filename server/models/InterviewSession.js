@@ -6,6 +6,7 @@ const interviewSessionSchema = new mongoose.Schema(
     trialId: { type: String, default: null, index: true },
     trialMode: { type: Boolean, default: false },
     trialExpiresAt: { type: Date, default: null },
+    mode: { type: String, enum: ["practice", "recruiter", "pressure"], default: "practice" },
     company: { type: String, required: true, trim: true },
     role: { type: String, required: true, trim: true },
     jobContext: { type: String, default: "" }, // Optional JD text to tailor interview questions/feedback

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/AuthContext";
 import Sidebar from "./Sidebar";
 import CreditDisplay from "./CreditDisplay";
@@ -10,15 +11,11 @@ export default function Layout() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [location.pathname]);
+  useEffect(() => { setMobileMenuOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
+    return () => { document.body.style.overflow = ""; };
   }, [mobileMenuOpen]);
 
   const handleLogout = () => {
@@ -35,30 +32,45 @@ export default function Layout() {
         onCloseMobileMenu={() => setMobileMenuOpen(false)}
       />
 
-      <div className="flex-1 min-w-0">
-        <header className="md:hidden sticky top-0 z-20 border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-sm px-4 py-3">
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Mobile top bar */}
+        <header className="md:hidden sticky top-0 z-20 border-b border-white/5 backdrop-blur-xl px-4 py-3"
+          style={{ background: "rgba(8,14,26,0.85)" }}
+        >
           <div className="flex items-center justify-between gap-3">
             <Link to="/dashboard" className="font-display font-bold text-lg text-white tracking-tight">
-              Hire<span className="text-brand-400">Mind</span>
+              Hire<span className="bg-gradient-to-r from-cyan-300 to-fuchsia-400 bg-clip-text text-transparent">Mind</span>
             </Link>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <CreditDisplay />
-              <button
+              <motion.button
                 type="button"
                 onClick={() => setMobileMenuOpen((v) => !v)}
+                whileTap={{ scale: 0.93 }}
                 aria-label="Toggle menu"
                 aria-expanded={mobileMenuOpen}
-                className="rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm font-medium text-slate-200"
+                className="rounded-xl border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-slate-300 backdrop-blur-sm"
               >
                 {mobileMenuOpen ? "Close" : "Menu"}
-              </button>
+              </motion.button>
             </div>
           </div>
         </header>
 
-        <main className="overflow-x-hidden">
+        {/* Page content with animated transitions */}
+        <main className="flex-1 overflow-x-hidden">
           <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-10">
-            <Outlet />
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <Outlet />
+              </motion.div>
+            </AnimatePresence>
           </div>
         </main>
       </div>

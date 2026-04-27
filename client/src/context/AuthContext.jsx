@@ -90,6 +90,13 @@ export function AuthProvider({ children }) {
     posthog.reset();
   };
 
+  const updateProfile = async (name) => {
+    const { data } = await api.put("/auth/update-profile", { name });
+    setUser((prev) => ({ ...prev, name: data.user.name }));
+    posthog.identify(data.user.id || user?.id, { name: data.user.name });
+    return data;
+  };
+
   const value = useMemo(
     () => ({
       user,
@@ -100,6 +107,7 @@ export function AuthProvider({ children }) {
       verifySignupOtp,
       resendSignupOtp,
       logout,
+      updateProfile,
     }),
     [user, loading]
   );

@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getOrCreateTrialId } from "../utils/freeTrial";
+import { getOrCreateTrialId, getDeviceFingerprint } from "../utils/freeTrial";
 
 function resolveApiBaseUrl() {
   const configured = String(import.meta.env.VITE_API_PROXY || "").trim();
@@ -21,6 +21,7 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
   const trialId = getOrCreateTrialId();
+  const deviceFp = getDeviceFingerprint();
   const pathname = typeof window !== "undefined" ? window.location.pathname : "";
   const isPublicTryRoute = pathname === "/resume" || pathname === "/interview";
   if (token) {
@@ -28,6 +29,9 @@ api.interceptors.request.use((config) => {
   }
   if (trialId) {
     config.headers["x-trial-id"] = trialId;
+  }
+  if (deviceFp) {
+    config.headers["x-device-fp"] = deviceFp;
   }
   if (isPublicTryRoute) {
     config.headers["x-guest-mode"] = "1";

@@ -149,12 +149,35 @@ export async function verifyPayment(req, res) {
       balanceAfter: status.credits,
       feature: "purchase",
       metadata: {
+        // Plan
         subscriptionType: planId,
-        description: `${plan.label} purchased via Razorpay`,
-        razorpayOrderId: razorpay_order_id,
+        planLabel:        plan.label,
+        planCredits:      plan.credits,
+        planPrice:        plan.price,
+        description:      `${plan.label} purchased via Razorpay`,
+
+        // Razorpay IDs
+        razorpayOrderId:   razorpay_order_id,
         razorpayPaymentId: razorpay_payment_id,
+
+        // Amount
         amountPaid: payment.amount / 100,
-        currency: payment.currency,
+        currency:   payment.currency,
+
+        // Payment method
+        paymentMethod: payment.method,
+        bank:          payment.bank          || undefined,
+        wallet:        payment.wallet        || undefined,
+        vpa:           payment.vpa           || undefined,
+        cardNetwork:   payment.card?.network || undefined,
+        cardLast4:     payment.card?.last4   || undefined,
+        cardIssuer:    payment.card?.issuer_name || undefined,
+
+        // Payer
+        payerEmail:   payment.email   || undefined,
+        payerContact: payment.contact || undefined,
+
+        paymentStatus: payment.status,
       },
     });
 
@@ -234,13 +257,36 @@ export async function razorpayWebhook(req, res) {
       balanceAfter: status.credits,
       feature: "purchase",
       metadata: {
+        // Plan
         subscriptionType: planId,
-        description: `${plan.label} purchased via Razorpay (webhook)`,
-        razorpayOrderId: orderId,
+        planLabel:        plan.label,
+        planCredits:      plan.credits,
+        planPrice:        plan.price,
+        description:      `${plan.label} purchased via Razorpay (webhook)`,
+
+        // Razorpay IDs
+        razorpayOrderId:   orderId,
         razorpayPaymentId: payment.id,
+
+        // Amount
         amountPaid: payment.amount / 100,
-        currency: payment.currency,
-        source: "webhook",
+        currency:   payment.currency,
+
+        // Payment method (webhook entity contains same fields)
+        paymentMethod: payment.method,
+        bank:          payment.bank          || undefined,
+        wallet:        payment.wallet        || undefined,
+        vpa:           payment.vpa           || undefined,
+        cardNetwork:   payment.card?.network || undefined,
+        cardLast4:     payment.card?.last4   || undefined,
+        cardIssuer:    payment.card?.issuer_name || undefined,
+
+        // Payer
+        payerEmail:   payment.email   || undefined,
+        payerContact: payment.contact || undefined,
+
+        paymentStatus: payment.status,
+        source:        "webhook",
       },
     });
 

@@ -432,6 +432,217 @@ export async function endInterview(req, res) {
   }
 }
 
+export async function converseInterview(req, res) {
+  try {
+    const { sessionId, userMessage } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ message: "sessionId is required" });
+    }
+
+    const session = await InterviewSession.findOne(getSessionAccessQuery(sessionId, req.userId, req.trialId));
+    if (!session) return res.status(404).json({ message: "Session not found" });
+    if (session.status === "completed") {
+      return res.status(400).json({ message: "Interview already completed" });
+    }
+
+    if (session.trialMode && session.trialExpiresAt && Date.now() >= new Date(session.trialExpiresAt).getTime()) {
+      await syncTrialInterviewSeconds(session.trialId, session);
+      return res.status(403).json({
+        message: "Free AI interview time is over. Create a free account to continue.",
+        code: "FREE_LIMIT_REACHED",
+      });
+    }
+
+    // Build conversation history from transcript
+    const conversationHistory = [];
+    for (const entry of session.transcript) {
+      if (entry.question) conversationHistory.push({ role: "interviewer", text: entry.question });
+      if (entry.answer) conversationHistory.push({ role: "candidate", text: entry.answer });
+    }
+
+    // Add the new user message
+    if (userMessage && userMessage.trim()) {
+      conversationHistory.push({ role: "candidate", text: userMessage.trim() });
+    }
+
+    // Get the candidate's name from user record or request
+    let candidateName = req.body.candidateName || "";
+    if (!candidateName && req.userId) {
+      const User = (await import("../models/User.js")).default;
+      const user = await User.findById(req.userId).select("name").lean();
+      candidateName = user?.name || "";
+    }
+
+    let aiResponse = await gemini.generateConversationalResponse(conversationHistory, {
+      company: session.company,
+      role: session.role,
+      candidateName,
+      resumeSnippet: session.resumeContext || "",
+      jobContextSnippet: session.jobContext || "",
+      mode: session.mode,
+    });
+
+    // #region agent log
+    const _rawResp = aiResponse;
+    // #endregion
+    // Sanitize: strip incomplete trailing sentences (em dash, ellipsis, dangling comma)
+    aiResponse = aiResponse.replace(/[\u2014\u2013—–,]\s*$/, ".").replace(/\.{2,}\s*$/, ".").trim();
+    // #region agent log
+    try { fs.appendFileSync('/Users/rachit/Desktop/HireMind/.cursor/debug-244377.log', JSON.stringify({sessionId:'244377',location:'interviewController:converseInterview',message:'AI RESPONSE',data:{rawLen:_rawResp.length,sanitizedLen:aiResponse.length,raw:_rawResp.slice(0,500),sanitized:aiResponse.slice(0,500),endsCleanly:/[.?!]$/.test(aiResponse.trim()),changed:_rawResp!==aiResponse},timestamp:Date.now(),hypothesisId:'H-C'})+'\n'); } catch(_e){}
+    // #endregion
+
+    // Save to transcript: store the user's message as an answer and AI's response as the next question
+    if (userMessage && userMessage.trim()) {
+      // Append user answer to the last transcript entry or create new
+      const lastEntry = session.transcript[session.transcript.length - 1];
+      if (lastEntry && !lastEntry.answer) {
+        lastEntry.answer = userMessage.trim();
+      } else {
+        session.transcript.push({
+          stage: session.currentStage || "technical",
+          question: "",
+          answer: userMessage.trim(),
+          feedback: "",
+        });
+      }
+    }
+
+    // Add AI response as the next question entry
+    session.transcript.push({
+      stage: session.currentStage || "technical",
+      question: aiResponse,
+      answer: "",
+      feedback: "",
+    });
+
+    const questionCount = session.transcript.filter((t) => t.question).length;
+
+    await session.save();
+    await syncTrialInterviewSeconds(session.trialId, session);
+
+    return res.json({
+      aiMessage: aiResponse,
+      questionCount,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message || "Failed to process conversation" });
+  }
+}
+
+export async function startConversationalInterview(req, res) {
+  try {
+    const { company, role, mode } = req.body;
+    if (!company?.trim() || !role?.trim()) {
+      return res.status(400).json({ message: "Company and role are required" });
+    }
+    if (!["recruiter", "pressure"].includes(mode)) {
+      return res.status(400).json({ message: "Invalid mode for conversational interview" });
+    }
+
+    const jdFile = req.files?.jobDescription?.[0];
+    const resumeFile = req.files?.resume?.[0];
+    if (!resumeFile) {
+      return res.status(400).json({ message: "Resume is required to start interview" });
+    }
+
+    const isGuestTrial = !req.userId;
+    if (isGuestTrial) {
+      if (!req.trialId) {
+        return res.status(400).json({ message: "Trial identity missing. Refresh and try again." });
+      }
+      const usage = await upsertTrialUsage(req.trialId);
+      const retryAfterSeconds = getSecondsRemainingFromTimestamp(
+        usage?.interviewLastAttemptAt,
+        INTERVIEW_TRIAL_COOLDOWN_SECONDS
+      );
+      if (retryAfterSeconds > 0) {
+        return res.status(429).json({
+          message: `Please wait ${retryAfterSeconds}s before trying again.`,
+          code: "TRIAL_RATE_LIMIT",
+          retryAfterSeconds,
+        });
+      }
+      if (usage?.interviewTrialUsed) {
+        return res.status(403).json({
+          message: "Free AI interview trial already used. Create a free account to continue.",
+          code: "FREE_LIMIT_REACHED",
+        });
+      }
+    }
+
+    const jdText = jdFile ? await extractTextFromPdfOrImage(jdFile) : "";
+    const uploadedResumeText = resumeFile ? await extractTextFromPdfOrImage(resumeFile) : "";
+    const storedResumeText = await getResumeSnippet(req.userId);
+    const resumeContextText = uploadedResumeText || storedResumeText;
+
+    // Get candidate name
+    let candidateName = "";
+    if (req.userId) {
+      const User = (await import("../models/User.js")).default;
+      const user = await User.findById(req.userId).select("name").lean();
+      candidateName = user?.name || "";
+    }
+
+    // Generate the AI's opening greeting
+    let aiGreeting = await gemini.generateConversationalResponse([], {
+      company: company.trim(),
+      role: role.trim(),
+      candidateName,
+      resumeSnippet: resumeContextText,
+      jobContextSnippet: jdText,
+      mode,
+    });
+
+    // Sanitize: strip incomplete trailing sentences
+    aiGreeting = aiGreeting.replace(/[\u2014\u2013—–,]\s*$/, ".").replace(/\.{2,}\s*$/, ".").trim();
+
+    const session = await InterviewSession.create({
+      userId: req.userId || null,
+      trialId: isGuestTrial ? req.trialId : null,
+      trialMode: isGuestTrial,
+      trialExpiresAt: isGuestTrial ? new Date(Date.now() + FREE_INTERVIEW_LIMIT_SECONDS * 1000) : null,
+      mode,
+      company: company.trim(),
+      role: role.trim(),
+      jobContext: jdText,
+      resumeContext: resumeContextText,
+      transcript: [{ stage: "technical", question: aiGreeting, answer: "", feedback: "" }],
+      currentStage: "technical",
+      status: "in_progress",
+    });
+
+    if (isGuestTrial) {
+      await FreeTrialUsage.findOneAndUpdate(
+        { trialId: req.trialId },
+        {
+          $set: {
+            interviewTrialUsed: true,
+            interviewSecondsUsed: 0,
+            interviewLastAttemptAt: new Date(),
+            lastSeenAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    }
+
+    res.json({
+      sessionId: session._id,
+      aiMessage: aiGreeting,
+      mode,
+      candidateName,
+      trialLimitSeconds: isGuestTrial ? FREE_INTERVIEW_LIMIT_SECONDS : null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message || "Failed to start interview" });
+  } finally {
+    unlinkQuiet(req.files?.jobDescription?.[0]?.path);
+    unlinkQuiet(req.files?.resume?.[0]?.path);
+  }
+}
+
 export async function rateInterview(req, res) {
   try {
     const { sessionId, rating } = req.body;

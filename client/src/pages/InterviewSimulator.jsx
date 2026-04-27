@@ -6,6 +6,8 @@ import { useAuth } from "../context/AuthContext";
 import { useCredits } from "../context/CreditContext";
 import SignupPromptModal from "../components/SignupPromptModal";
 import CreditQuotaModal from "../components/CreditQuotaModal";
+import RecruiterInterviewUI from "../components/interview/RecruiterInterviewUI";
+import PressureInterviewUI from "../components/interview/PressureInterviewUI";
 import {
   FREE_INTERVIEW_LIMIT_SECONDS,
   addFreeInterviewSecondsUsed,
@@ -79,6 +81,8 @@ export default function InterviewSimulator() {
   const [trialStatus, setTrialStatus] = useState(null);
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [creditError, setCreditError] = useState(null);
+  const [interviewMode, setInterviewMode] = useState("practice");
+  const [conversationalSession, setConversationalSession] = useState(null);
 
   const remainingFreeInterviewSeconds =
     trialStatus?.mode === "guest"
@@ -264,6 +268,62 @@ export default function InterviewSimulator() {
     setLoading(true);
     setReport(null);
     setMessages([]);
+    setConversationalSession(null);
+
+    // Recruiter / Pressure mode — use conversational endpoint
+    if (interviewMode === "recruiter" || interviewMode === "pressure") {
+      try {
+        const fd = new FormData();
+        fd.append("company", company);
+        fd.append("role", role);
+        fd.append("mode", interviewMode);
+        if (jdFile) fd.append("jobDescription", jdFile);
+        if (resumeFile) fd.append("resume", resumeFile);
+
+        const { data } = await api.post("/interviews/start-conversational", fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        posthog.capture("interview_started", {
+          company, role, duration_minutes: durationMinutes, mode: interviewMode,
+        });
+        if (isAuthenticated) {
+          posthog.capture("credit_used", { feature: "interview", amount: 10 });
+          refreshCredits();
+        }
+        if (!isAuthenticated) {
+          markFreeInterviewTrialUsed();
+          trackAiInterviewFreeStarted({
+            resume_uploaded: Boolean(resumeFile),
+            job_description_present: Boolean(jdFile),
+            target_company: company,
+            target_role: role,
+          });
+        }
+
+        setConversationalSession({
+          sessionId: data.sessionId,
+          aiMessage: data.aiMessage,
+          candidateName: data.candidateName || "",
+          mode: interviewMode,
+        });
+      } catch (err) {
+        const errorCode = err?.response?.data?.code;
+        if (isAuthenticated && (errorCode === "INSUFFICIENT_CREDITS" || errorCode === "UNLIMITED_CAP_REACHED")) {
+          setCreditError(err.response.data);
+          setShowCreditModal(true);
+          setApiError(err.response.data.message);
+        } else {
+          setApiError(getApiErrorMessage(err, "Could not start interview"));
+          if (errorCode === "FREE_LIMIT_REACHED") setShowSignupPrompt(true);
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Practice mode — existing flow
     try {
       const fd = new FormData();
       fd.append("company", company);
@@ -306,6 +366,7 @@ export default function InterviewSimulator() {
         company,
         role,
         duration_minutes: durationMinutes,
+        mode: "practice",
       });
 
       // Track credit usage for authenticated users
@@ -485,6 +546,7 @@ export default function InterviewSimulator() {
       {guestMode && <div className="pointer-events-none absolute top-1/3 -right-20 h-64 w-64 rounded-full bg-fuchsia-500/18 blur-3xl" />}
       {guestMode && <div className="pointer-events-none absolute bottom-0 left-1/4 h-56 w-56 rounded-full bg-indigo-400/16 blur-3xl" />}
 
+      {!conversationalSession && (
       <div className={`relative z-10 mb-6 p-5 md:p-6 ${surfaceClass}`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -502,8 +564,9 @@ export default function InterviewSimulator() {
           )}
         </div>
       </div>
+      )}
 
-      {!sessionId && (
+      {!sessionId && !conversationalSession && (
         <form
           onSubmit={handleStart}
           className={`relative z-10 p-5 md:p-6 mb-8 max-w-2xl grid gap-4 sm:grid-cols-2 ${surfaceClass}`}
@@ -562,6 +625,32 @@ export default function InterviewSimulator() {
             )}
           </div>
 
+          <div className="sm:col-span-2">
+            <label className="block text-xs text-slate-400 mb-2">Interview mode</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: "practice", label: "Practice", desc: "Relaxed, guided Q&A with feedback", icon: "🎯" },
+                { id: "recruiter", label: "Recruiter", desc: "Realistic 1-on-1 conversation", icon: "🎙️" },
+                { id: "pressure", label: "Pressure", desc: "Proctored with cam & screen lock", icon: "🔴" },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setInterviewMode(m.id)}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    interviewMode === m.id
+                      ? "border-brand-500 bg-brand-500/10 ring-1 ring-brand-500/30"
+                      : "border-slate-700 bg-slate-800/40 hover:border-slate-600"
+                  }`}
+                >
+                  <span className="text-lg">{m.icon}</span>
+                  <p className={`text-sm font-semibold mt-1 ${interviewMode === m.id ? "text-brand-300" : "text-white"}`}>{m.label}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">{m.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs text-slate-400 mb-1">Interview duration</label>
             <select
@@ -586,12 +675,45 @@ export default function InterviewSimulator() {
                 : "bg-brand-500 hover:bg-brand-400"
             }`}
           >
-            {loading ? "Starting…" : "Start voice interview"}
+            {loading ? "Starting…" : interviewMode === "practice" ? "Start voice interview" : interviewMode === "recruiter" ? "Start recruiter interview" : "Start pressure interview"}
           </button>
         </form>
       )}
 
-      {sessionId && !report && (
+      {conversationalSession && !report && (
+        <div className="relative z-10">
+          {conversationalSession.mode === "pressure" ? (
+            <PressureInterviewUI
+              sessionId={conversationalSession.sessionId}
+              initialAiMessage={conversationalSession.aiMessage}
+              candidateName={conversationalSession.candidateName}
+              durationMinutes={durationMinutes}
+              onEnd={() => {}}
+              onReport={(r) => {
+                setSessionId(conversationalSession.sessionId);
+                setReport(r);
+                setConversationalSession(null);
+              }}
+            />
+          ) : (
+            <RecruiterInterviewUI
+              sessionId={conversationalSession.sessionId}
+              initialAiMessage={conversationalSession.aiMessage}
+              candidateName={conversationalSession.candidateName}
+              durationMinutes={durationMinutes}
+              mode="recruiter"
+              onEnd={() => {}}
+              onReport={(r) => {
+                setSessionId(conversationalSession.sessionId);
+                setReport(r);
+                setConversationalSession(null);
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {sessionId && !report && !conversationalSession && (
         <div className="grid lg:grid-cols-3 gap-6">
           <div className={`lg:col-span-2 min-h-[380px] flex flex-col ${surfaceClass}`}>
             <div className="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
@@ -791,6 +913,7 @@ export default function InterviewSimulator() {
               setRating(0);
               setRatingSubmitted(false);
               setRatingMessage("");
+              setConversationalSession(null);
             }}
             className="mt-8 font-semibold bg-brand-500 hover:bg-brand-400 text-white px-5 py-2.5 rounded-xl"
           >

@@ -29,12 +29,32 @@ function getClientUserAgent(req) {
   return ua.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
-function createFingerprintTrialId(ip, userAgent) {
+/**
+ * Server-side fingerprint based on IP + User-Agent.
+ * Changes when IP changes (mobile networks, dynamic ISP), so it is used only
+ * as a supplementary signal alongside the client-side device fingerprint.
+ */
+function createServerFingerprint(ip, userAgent) {
   if (!ip) return "";
   const salt = process.env.TRIAL_IDENTITY_SALT || "hm-trial-ip-salt";
   const fingerprint = userAgent ? `${ip}|${userAgent}` : ip;
   const digest = crypto.createHash("sha256").update(`${salt}:${fingerprint}`).digest("hex");
   return `fp_${digest}`;
+}
+
+/**
+ * Client-supplied device fingerprint (canvas + screen + navigator signals).
+ * Stable across incognito mode AND localStorage/cookie clears because it is
+ * computed from hardware characteristics, not stored state.
+ * We re-hash it server-side with a salt so raw client values are not stored.
+ */
+function normalizeClientDeviceFp(rawClientFp) {
+  if (typeof rawClientFp !== "string" || rawClientFp.length < 8 || rawClientFp.length > 256) {
+    return "";
+  }
+  const salt = process.env.TRIAL_IDENTITY_SALT || "hm-trial-ip-salt";
+  const digest = crypto.createHash("sha256").update(`${salt}:cdfp:${rawClientFp}`).digest("hex");
+  return `cdfp_${digest}`;
 }
 
 function parseCookieHeader(cookieHeader = "") {
@@ -74,41 +94,84 @@ export async function ensureTrialIdentity(req, res, next) {
 
   const clientIp = getClientIp(req);
   const userAgent = getClientUserAgent(req);
-  const fingerprintTrialId = createFingerprintTrialId(clientIp, userAgent);
+  const serverFp = createServerFingerprint(clientIp, userAgent);
+
+  // Client-computed device fingerprint (canvas + screen + navigator).
+  // Hashed server-side before storage so raw values are never stored.
+  const rawClientFp = typeof req.headers["x-device-fp"] === "string"
+    ? req.headers["x-device-fp"].trim()
+    : "";
+  const clientDeviceFp = normalizeClientDeviceFp(rawClientFp);
+
   const cookies = parseCookieHeader(req.headers.cookie);
-  const headerTrialId = typeof req.headers["x-trial-id"] === "string" ? req.headers["x-trial-id"].trim() : "";
+  const headerTrialId = typeof req.headers["x-trial-id"] === "string"
+    ? req.headers["x-trial-id"].trim()
+    : "";
   const cookieTrialId = cookies[TRIAL_COOKIE_NAME] || "";
 
-  // Prefer persistent IDs (header from localStorage, then cookie) over fingerprint.
-  // Fingerprint changes when the user's IP changes (mobile WiFi ↔ cellular, dynamic ISP).
-  let trialId =
-    (isValidTrialId(headerTrialId) ? headerTrialId : "") ||
-    (isValidTrialId(cookieTrialId) ? cookieTrialId : "") ||
-    "";
+  // Build the list of fingerprints we can use to identify this device.
+  // clientDeviceFp is canvas-based so it survives incognito + storage clears.
+  // serverFp (IP+UA) is the legacy fallback and may change over time.
+  const fingerprintsToCheck = [clientDeviceFp, serverFp].filter(Boolean);
 
-  // If no persistent ID, check if this fingerprint was already linked to an existing trial
-  if (!trialId && fingerprintTrialId) {
+  // -----------------------------------------------------------------------
+  // Resolution order (most reliable → least reliable):
+  //
+  // 1. Device fingerprints — check DB FIRST, before trusting any client ID.
+  //    If this device's fingerprints are already linked to a trial record,
+  //    use that record's ID. This is what blocks incognito re-tries and
+  //    prevents resets after localStorage/cookie clears.
+  //
+  // 2. Client-supplied persistent IDs (localStorage header, then HttpOnly
+  //    cookie). Only used when the device has no existing trial record.
+  //
+  // 3. Server fingerprint as the trial ID itself (new device, no record yet).
+  //
+  // 4. Random UUID as last resort (no IP available, server-less env, etc.).
+  // -----------------------------------------------------------------------
+  let trialId = "";
+
+  // Step 1 — fingerprint lookup (always runs, even when header/cookie present)
+  if (fingerprintsToCheck.length > 0) {
     try {
-      const linked = await FreeTrialUsage.findOne({ linkedFingerprints: fingerprintTrialId }).select("trialId").lean();
-      if (linked) {
+      const linked = await FreeTrialUsage.findOne({
+        linkedFingerprints: { $in: fingerprintsToCheck },
+      })
+        .select("trialId")
+        .lean();
+      if (linked?.trialId) {
         trialId = linked.trialId;
       }
-    } catch { /* noop — fall through to fingerprint */ }
+    } catch {
+      // Non-fatal: fall through to client-supplied IDs
+    }
   }
 
+  // Step 2 — client-supplied persistent IDs (only when device has no record)
   if (!trialId) {
-    trialId = fingerprintTrialId;
+    trialId =
+      (isValidTrialId(headerTrialId) ? headerTrialId : "") ||
+      (isValidTrialId(cookieTrialId) ? cookieTrialId : "") ||
+      "";
   }
 
+  // Step 3 — server fingerprint as fallback ID
+  if (!trialId) {
+    trialId = serverFp;
+  }
+
+  // Step 4 — random UUID if nothing else works
   if (!isValidTrialId(trialId)) {
     trialId = crypto.randomUUID();
   }
 
-  // Link the current fingerprint to this trial record (async, non-blocking)
-  if (fingerprintTrialId && isValidTrialId(trialId)) {
+  // Link ALL current fingerprints to this trial record (non-blocking).
+  // This is what enables future incognito sessions to be caught by Step 1.
+  const fingerprintsToAdd = [clientDeviceFp, serverFp].filter(Boolean);
+  if (fingerprintsToAdd.length > 0 && isValidTrialId(trialId)) {
     FreeTrialUsage.findOneAndUpdate(
       { trialId },
-      { $addToSet: { linkedFingerprints: fingerprintTrialId } },
+      { $addToSet: { linkedFingerprints: { $each: fingerprintsToAdd } } },
       { upsert: false }
     ).catch(() => {});
   }

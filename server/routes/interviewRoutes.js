@@ -17,6 +17,18 @@ r.post(
   ]),
   interview.startInterview
 );
+r.post(
+  "/start-conversational",
+  optionalAuth,
+  ensureTrialIdentity,
+  requireCredits("ai_interview"),
+  uploadQuestionInterviewContext.fields([
+    { name: "jobDescription", maxCount: 1 },
+    { name: "resume", maxCount: 1 },
+  ]),
+  interview.startConversationalInterview
+);
+r.post("/converse", optionalAuth, ensureTrialIdentity, interview.converseInterview);
 r.post("/answer", optionalAuth, ensureTrialIdentity, interview.submitAnswer);
 r.post("/end", optionalAuth, ensureTrialIdentity, interview.endInterview);
 r.use(authRequired);

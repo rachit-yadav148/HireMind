@@ -359,8 +359,81 @@ export async function me(req, res) {
       name: user.name,
       email: user.email,
       resumeCount: user.resumes?.length ?? 0,
+      createdAt: user.createdAt,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+}
+
+// PUT /api/auth/update-profile
+export async function updateProfile(req, res) {
+  try {
+    const { name } = req.body;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ message: "Name is required" });
+    }
+    const trimmedName = String(name).trim();
+    if (trimmedName.length < 2) {
+      return res.status(400).json({ message: "Name must be at least 2 characters" });
+    }
+    if (trimmedName.length > 60) {
+      return res.status(400).json({ message: "Name must be under 60 characters" });
+    }
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      { name: trimmedName },
+      { new: true, select: "name email createdAt" }
+    );
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ message: "Profile updated", user: { id: user._id, name: user.name, email: user.email } });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to update profile" });
+  }
+}
+
+// PUT /api/auth/change-password
+export async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Current password and new password are required" });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ message: "New password must be at least 6 characters" });
+    }
+    const user = await User.findById(req.userId).select("password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const match = await bcrypt.compare(currentPassword, user.password);
+    if (!match) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+    user.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+    await user.save();
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to change password" });
+  }
+}
+
+// DELETE /api/auth/account
+export async function deleteAccount(req, res) {
+  try {
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ message: "Please confirm with your password" });
+    }
+    const user = await User.findById(req.userId).select("password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(400).json({ message: "Incorrect password" });
+    }
+    await User.findByIdAndDelete(req.userId);
+    res.json({ message: "Account deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Failed to delete account" });
   }
 }
