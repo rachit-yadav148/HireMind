@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken, getToken } from "../services/api";
+import { setCachedCredits, clearBootstrapCache } from "../services/bootstrapCache";
 import posthog from "../posthog";
 import { getFreeInterviewSecondsUsed, getFreeResumeAnalysisUsed, shouldTrackUserSignedUpAfterTryingFree } from "../utils/freeTrial";
 import { trackUserSignedUpAfterTryingFree } from "../utils/tryFreeAnalytics";
@@ -25,15 +26,19 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
+    // /auth/bootstrap returns user + credits in ONE request,
+    // eliminating the sequential auth→credits waterfall on app load.
     api
-      .get("/auth/me")
+      .get("/auth/bootstrap")
       .then((res) => {
-        setUser(res.data);
-        identifyUser(res.data);
+        setUser(res.data.user);
+        identifyUser(res.data.user);
+        if (res.data.credits) setCachedCredits(res.data.credits);
       })
       .catch(() => {
         setAuthToken(null);
         setUser(null);
+        clearBootstrapCache();
         posthog.reset();
       })
       .finally(() => setLoading(false));
@@ -87,6 +92,7 @@ export function AuthProvider({ children }) {
   const logout = () => {
     setAuthToken(null);
     setUser(null);
+    clearBootstrapCache();
     posthog.reset();
   };
 

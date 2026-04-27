@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -80,6 +81,7 @@ const corsOptions = {
   credentials: true,
 };
 
+app.use(compression());
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
 

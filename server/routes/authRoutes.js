@@ -11,6 +11,7 @@ r.post("/login", auth.login);
 r.post("/forgot-password", forgotPasswordRateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), auth.forgotPassword);
 r.post("/reset-password", auth.resetPassword);
 r.get("/me", authRequired, auth.me);
+r.get("/bootstrap", authRequired, auth.bootstrap);
 r.put("/update-profile", authRequired, auth.updateProfile);
 r.put("/change-password", authRequired, auth.changePassword);
 r.delete("/account", authRequired, auth.deleteAccount);

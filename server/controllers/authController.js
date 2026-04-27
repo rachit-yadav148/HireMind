@@ -3,6 +3,15 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { canSendMail, sendPasswordResetEmail, sendSignupOtpEmail } from "../services/mailService.js";
+import { getCreditStatus, CREDIT_COSTS } from "../services/creditService.js";
+
+const SUBSCRIPTION_PLANS = {
+  monthly: { credits: 300, price: 249, durationMonths: 1 },
+  quarterly: { credits: 1000, price: 749, durationMonths: 3 },
+  half_yearly: { credits: 2200, price: 1399, durationMonths: 6 },
+  yearly: { credits: 5000, price: 2899, durationMonths: 12 },
+  unlimited_monthly: { credits: "unlimited", price: 1649, durationMonths: 1 },
+};
 
 const BCRYPT_SALT_ROUNDS = Math.max(8, Math.min(14, Number(process.env.BCRYPT_SALT_ROUNDS || 10)));
 
@@ -360,6 +369,34 @@ export async function me(req, res) {
       email: user.email,
       resumeCount: user.resumes?.length ?? 0,
       createdAt: user.createdAt,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+}
+
+// GET /api/auth/bootstrap — returns user + credits in ONE round trip
+// Eliminates the sequential auth→credits waterfall on every app load
+export async function bootstrap(req, res) {
+  try {
+    const [user, creditStatus] = await Promise.all([
+      User.findById(req.userId).select("-password").populate("resumes"),
+      getCreditStatus(req.userId),
+    ]);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        resumeCount: user.resumes?.length ?? 0,
+        createdAt: user.createdAt,
+      },
+      credits: {
+        ...creditStatus,
+        creditCosts: CREDIT_COSTS,
+        plans: SUBSCRIPTION_PLANS,
+      },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

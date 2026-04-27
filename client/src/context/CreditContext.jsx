@@ -1,18 +1,22 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { api, getToken } from "../services/api";
+import { getCachedCredits, clearBootstrapCache } from "../services/bootstrapCache";
 import { useAuth } from "./AuthContext";
 import posthog from "../posthog";
 
 const CreditContext = createContext();
 
 export function CreditProvider({ children }) {
-  const [creditStatus, setCreditStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from bootstrap cache if AuthContext already fetched user+credits together.
+  // This avoids a second round trip on app load.
+  const [creditStatus, setCreditStatus] = useState(() => getCachedCredits());
+  const [loading, setLoading] = useState(() => !getCachedCredits());
   const { isAuthenticated } = useAuth();
   const location = useLocation();
-  const lastFetchRef = useRef(0);
+  const lastFetchRef = useRef(creditStatus ? Date.now() : 0);
   const exhaustedFiredRef = useRef(false);
+  const bootstrapConsumedRef = useRef(Boolean(getCachedCredits()));
 
   const fetchCreditStatus = useCallback(async () => {
     const token = getToken();
@@ -47,6 +51,13 @@ export function CreditProvider({ children }) {
 
   // Re-fetch when auth state changes (login / logout)
   useEffect(() => {
+    // If bootstrap already seeded credits for this session, skip the initial fetch
+    // but clear the flag so future auth changes (logout/login) fetch normally.
+    if (bootstrapConsumedRef.current && isAuthenticated) {
+      bootstrapConsumedRef.current = false;
+      clearBootstrapCache();
+      return;
+    }
     fetchCreditStatus();
   }, [isAuthenticated, fetchCreditStatus]);
 
