@@ -55,19 +55,19 @@
       radial-gradient(ellipse 40% 40% at 20% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
   }
 
-  /* Glassmorphism card */
+  /* Glassmorphism card — backdrop-blur is GPU-expensive on mobile, so 12px is the sweet spot. */
   .glass {
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: rgba(15, 23, 42, 0.72);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgba(148, 163, 184, 0.1);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .glass-bright {
-    background: rgba(15, 23, 42, 0.75);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+    background: rgba(15, 23, 42, 0.82);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     border: 1px solid rgba(148, 163, 184, 0.15);
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
@@ -200,4 +200,29 @@
   animation: blink 1s step-end infinite;
   color: #06b6d4;
   margin-left: 1px;
+}
+
+/* ─── Pure-CSS floating animations (run on GPU compositor, not main JS thread) ─ */
+@keyframes orbFloat1 { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(25px,-18px,0); } }
+@keyframes orbFloat2 { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(-20px,22px,0); } }
+@keyframes orbFloat3 { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(16px,12px,0); } }
+@keyframes gentleFloat { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-7px,0); } }
+
+.orb-float-1 { animation: orbFloat1 14s ease-in-out infinite; will-change: transform; }
+.orb-float-2 { animation: orbFloat2 16s ease-in-out infinite 2s; will-change: transform; }
+.orb-float-3 { animation: orbFloat3 11s ease-in-out infinite 4s; will-change: transform; }
+.gentle-float { animation: gentleFloat 7s ease-in-out infinite; will-change: transform; }
+.gentle-float-slow { animation: gentleFloat 5.5s ease-in-out infinite 2s; will-change: transform; }
+.gentle-float-slower { animation: gentleFloat 4.5s ease-in-out infinite 1s; will-change: transform; }
+
+/* Honor user's reduced-motion preference — kills all infinite loops */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
