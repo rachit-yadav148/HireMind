@@ -31,11 +31,26 @@ function buildManualJobContext(body) {
   return lines.join("\n");
 }
 
+/** If pdf-parse yields less than this, try Gemini on the PDF (handles scanned / image-based JDs). */
+const JD_PDF_TEXT_FALLBACK_THRESHOLD = 80;
+
 async function extractJobDescriptionFileText(file) {
   const buffer = fs.readFileSync(file.path);
   if (file.mimetype === "application/pdf") {
     const data = await pdfParse(buffer);
-    return (data.text || "").trim();
+    let text = (data.text || "").trim();
+    if (text.length < JD_PDF_TEXT_FALLBACK_THRESHOLD) {
+      try {
+        const viaAi = await gemini.extractTextFromPdfDocument(buffer);
+        const aiLen = viaAi?.trim().length ?? 0;
+        if (aiLen >= 30 && aiLen > text.length) {
+          text = viaAi.trim();
+        }
+      } catch (e) {
+        console.error("[JD PDF] Gemini extraction failed:", e?.message || e);
+      }
+    }
+    return text;
   }
   return gemini.extractTextFromJobDescriptionImage(buffer, file.mimetype);
 }
@@ -128,6 +143,24 @@ export async function analyzeResumeUpload(req, res) {
     }
 
     const manualText = buildManualJobContext(req.body || {});
+    const jdExtracted = (jdFileText || "").trim();
+    const manualJd = (manualText || "").trim();
+
+    if (jdFile && !jdExtracted && !manualJd) {
+      return res.status(400).json({
+        message:
+          "Could not read any text from your job description file, and no job details were filled in the form. Paste the job description into the form fields or upload a text-based PDF (not a scanned image-only PDF).",
+      });
+    }
+
+    const JD_EXTRACT_MIN_CHARS = 50;
+    if (jdFile && jdExtracted && jdExtracted.length < JD_EXTRACT_MIN_CHARS && !manualJd) {
+      return res.status(400).json({
+        message:
+          "Very little text was extracted from the job description file. Add the job description using the form fields and/or upload a selectable-text PDF so the analysis can compare against the real requirements.",
+      });
+    }
+
     const jobContextText = combineJobContext(manualText, jdFileText);
 
     const analysis = await gemini.analyzeResume(resumeText, jobContextText);

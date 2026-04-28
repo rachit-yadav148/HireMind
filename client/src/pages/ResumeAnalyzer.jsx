@@ -720,6 +720,35 @@ function renderInlineBold(text) {
   });
 }
 
+/** Colon after "(from JD" / "(implied by JD" is part of the label, not title/detail separator. */
+function indexOfTitleDetailColon(str) {
+  let i = 0;
+  while (i < str.length) {
+    const c = str.indexOf(":", i);
+    if (c === -1) return -1;
+    const before = str.slice(0, c);
+    if (/\(from JD\s*$/i.test(before) || /\(implied by JD\s*$/i.test(before)) {
+      i = c + 1;
+      continue;
+    }
+    return c;
+  }
+  return -1;
+}
+
+/** e.g. "CI/CD (from JD: "quote…")" → title "CI/CD (from JD)", points ["quote…"] */
+function parseJdAttributionLine(compact) {
+  const m = compact.match(/^(.+?)\s*\((from JD|implied by JD)\s*:\s*(.+)$/i);
+  if (!m) return null;
+  const skill = m[1].trim();
+  const label = m[2];
+  let evidence = m[3].trim().replace(/\)\s*$/, "").replace(/^['"""`]+|['"""`]+$/g, "").trim();
+  return {
+    title: `${skill} (${label})`,
+    points: evidence ? [evidence] : [],
+  };
+}
+
 function parseSuggestionText(text) {
   if (!text || typeof text !== "string") return { title: "No content", points: [] };
 
@@ -735,6 +764,9 @@ function parseSuggestionText(text) {
     };
   }
 
+  const jdParsed = parseJdAttributionLine(compact);
+  if (jdParsed) return jdParsed;
+
   const withBullets = compact
     .replace(/Original:/gi, "| Original:")
     .replace(/Improved:/gi, "| Improved:")
@@ -744,7 +776,7 @@ function parseSuggestionText(text) {
   const parts = withBullets.split("|").map((p) => p.trim().replace(/^\*\s*/, "")).filter(Boolean);
 
   if (parts.length <= 1) {
-    const colonIndex = compact.indexOf(":");
+    const colonIndex = indexOfTitleDetailColon(compact);
     if (colonIndex > 0 && colonIndex < compact.length - 1) {
       const heading = compact.slice(0, colonIndex).trim();
       const detail = compact.slice(colonIndex + 1).trim().replace(/^['"]+|['"]+$/g, "");

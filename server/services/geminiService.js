@@ -129,6 +129,75 @@ function uniqueAndConcrete(list, maxItems) {
   return out;
 }
 
+/** Lowercase / simplify for “does this JD citation appear in the real JD text?” checks (PDF extract tolerant). */
+function normalizeJdMatchText(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u201c\u201d\u2018\u2019]/g, '"')
+    .replace(/[^\w\s+/.,%-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Words that appear in almost any JD — do not let overlap on these “pass” a fake citation. */
+const JD_EVIDENCE_STOPWORDS = new Set(
+  `a an the and or to of in for on at by from as is was are were be been being
+  have has had do does did will would could should may might must can need
+  this that these those we you our your their its they them us who what which
+  all any some such no not only own same so than too very just also both per
+  into about through during before after if then than once
+  work team role jobs job experience skills opportunity opportunities join great best
+  strong good excellent communication verbal written ability able looking seeking
+  year years plus day days time times remote hybrid onsite office full part
+  including include includes preferred plus etc`.split(/\s+/)
+);
+
+/** Parsed citation body after "(from JD:" / "(implied by JD:" up to the closing ")" of that segment. */
+function extractMissingSkillJdEvidence(line) {
+  const s = String(line);
+  const re = /\((?:from JD|implied by JD)\s*:\s*/i;
+  const m = s.match(re);
+  if (!m || m.index === undefined) return null;
+  let rest = s.slice(m.index + m[0].length).replace(/\)\s*$/, "").trim();
+  rest = rest.replace(/[\u201c\u201d\u2018\u2019]/g, '"');
+  rest = rest.replace(/^["']+|["']+$/g, "").trim();
+  return rest || null;
+}
+
+/**
+ * True if the model’s cited JD fragment is actually present in the supplied JD (exact-ish or word overlap).
+ * Stops hallucinated "missing skills" that only mimic the required string format.
+ */
+function jdEvidenceIsGrounded(evidence, jdText) {
+  const e = normalizeJdMatchText(evidence);
+  const j = normalizeJdMatchText(jdText);
+  if (!e || !j) return false;
+  if (e.length >= 10 && j.includes(e)) return true;
+  const words = e.split(/[\s,.;:/]+/).filter((w) => w.length >= 2);
+  const significant = words.filter((w) => !JD_EVIDENCE_STOPWORDS.has(w) && (w.length >= 3 || /^\d+$/.test(w)));
+  if (significant.length === 0) return false;
+  let hits = 0;
+  for (const w of significant) {
+    if (j.includes(w)) hits++;
+  }
+  if (significant.length <= 2) return hits === significant.length;
+  return hits / significant.length >= 0.75;
+}
+
+/** When a JD is provided, drop any missing-skills row without a grounded JD citation. */
+function filterMissingSkillsGroundedInJd(skills, jdText) {
+  const jd = String(jdText || "").trim();
+  if (!jd || !Array.isArray(skills)) return Array.isArray(skills) ? skills : [];
+  const out = [];
+  for (const line of skills) {
+    const ev = extractMissingSkillJdEvidence(line);
+    if (!ev || !jdEvidenceIsGrounded(ev, jd)) continue;
+    out.push(line);
+  }
+  return out;
+}
+
 /**
  * Extract readable text from an uploaded image document (JPEG/PNG/WebP/GIF).
  * @param {Buffer} buffer
@@ -149,6 +218,26 @@ export async function extractTextFromImageDocument(buffer, mimeType) {
     config: { temperature: 0.2, maxOutputTokens: 8192 },
   });
   return (response?.text ?? "").trim();
+}
+
+/** When pdf-parse returns nothing (scanned PDFs), Gemini can still read the document. */
+export async function extractTextFromPdfDocument(buffer) {
+  const ai = getClient();
+  const base64 = buffer.toString("base64");
+  const contents = createUserContent([
+    createPartFromText(
+      "Extract every readable word from this PDF (job posting, job description, or similar). Preserve section headings and bullet lists. Output plain UTF-8 text only — no preamble or markdown. If the file has no readable text, output exactly: NO_TEXT_EXTRACTED"
+    ),
+    createPartFromBase64(base64, "application/pdf"),
+  ]);
+  const response = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents,
+    config: { temperature: 0.1, maxOutputTokens: 8192 },
+  });
+  const raw = (response?.text ?? "").trim();
+  if (!raw || /^NO_TEXT_EXTRACTED\.?$/i.test(raw)) return "";
+  return raw;
 }
 
 /** Backward-compatible alias used in existing controllers */
@@ -173,6 +262,9 @@ ${jobContextText.trim().slice(0, 8000)}
 `
     : "";
 
+  /** UTC calendar date passed to the model so year/month comparisons are grounded (avoids hallucinated “future date” flags on `'YY` spans). */
+  const referenceDateUtc = new Date().toISOString().slice(0, 10);
+
   const scoringRubric = hasJd
     ? `
 SCORING RUBRIC (with JD) — score out of 100, sum the weighted components honestly:
@@ -192,6 +284,15 @@ SCORING RUBRIC (no JD) — score out of 100, sum the weighted components honestl
 
   const prompt = `You are a senior technical recruiter and ATS specialist who has screened 50,000+ resumes for companies like Google, Meta, Microsoft, Amazon, Stripe, and top product startups. You apply the same rubric used by industry recruiters and ATS systems (Workday, Greenhouse, Lever, iCIMS).
 
+REFERENCE DATE FOR THIS ANALYSIS (mandatory — use ONLY this calendar for past vs future):
+  Today is ${referenceDateUtc} (ISO UTC YYYY-MM-DD). When judging whether a role, certification period, achievement, or school year is “in the past”, “present”, or “in the future”, compare against THIS date only. Do NOT assume a different today (e.g. model training cutoff).
+
+DATE & YEAR INTERPRETATION (mandatory — avoid false “future dates” accusations):
+  • Abbreviated two-digit years ALWAYS mean 20YY for résumés: "Aug '25", "Aug'25", "Jun'24", "July'25" = August 2025, August 2025, June 2024, July 2025. Never interpret '25 as 1925.
+  • "Present", "Current", or "ongoing" for employment is normal alongside a month/year start date; do NOT treat the start date as questionable merely because it uses a two-digit year or sits next to "Present".
+  • Ranges like "2024–2025", "(2024 - 2025)", "2022–2025", "Jun'25–Jul'25" denote tenures OR academic/program years ending in those years — they are NOT automatically “future misleading” listings; treat the numeric years as calendar years ending on or before/after TODAY only according to REFERENCE DATE above (e.g. a range ending June–July 2025 is FULLY in the past if today is after July 31, 2025).
+  • Do NOT warn about misrepresented or “future” dates unless strictly after ${referenceDateUtc} when parsed as calendar months/years above. NEVER tell the candidate dates are wrong or “must be labelled Upcoming” when those dates are clearly on or before today under these rules.
+
 CRITICAL — PDF EXTRACTION ARTIFACTS: The resume text below was extracted programmatically from a PDF. PDF-to-text extraction commonly introduces artifacts that do NOT exist in the original document:
   - Missing spaces between adjacent columns/text-boxes (e.g. "TechnologyCGPA", "2024Led", "2023Mentored")
   - Merged headers and body text (e.g. "EducationB.Tech")
@@ -200,6 +301,18 @@ CRITICAL — PDF EXTRACTION ARTIFACTS: The resume text below was extracted progr
 You MUST NOT flag any of these as formatting issues, spelling errors, or inconsistencies in the resume. They are extraction noise, not candidate mistakes. Only flag formatting/spelling issues that would genuinely exist in the original PDF (e.g. actual misspelled words like "managment", legitimately wrong capitalisation like "javascript" for "JavaScript", real tense inconsistencies).
 
 Your job: produce a BRUTALLY HONEST, industry-grade ATS analysis. Most real-world resumes score 50-75. Only truly outstanding resumes score 85+. A resume that lacks metrics, has vague bullets, or is missing a core section MUST score below 60. Do not inflate scores to be polite — being honest is what helps candidates pass real screenings.
+${
+  hasJd
+    ? `
+MISSING SKILLS — HARD CONSTRAINT WHEN A JD IS PROVIDED:
+  The array missingSkills is NOT a "general SWE gap list". Compare ONLY the text inside === TARGET JOB DESCRIPTION === to the resume.
+  • Include an item ONLY if that exact requirement (tool, framework, methodology, certification, named technology) appears in the JD AND is absent or unsubstantiated on the resume.
+  • Do NOT infer cloud, containers, CI/CD, testing frameworks, DBs, or APIs from the job title or from what is "usually" expected — unless the JD (or structured form fields inside the JD block) explicitly mentions them.
+  • Do NOT fabricate "(e.g., X, Y, Z)" example lists unless the JD contains those examples.
+  • If the JD is non-technical or does not name specific tools, missingSkills should usually be empty [] or very small — never pad to look impressive.
+`
+    : ""
+}
 ${scoringRubric}
 
 RED FLAGS that you MUST detect when present (penalize each occurrence; cite the exact wording from the resume):
@@ -217,22 +330,23 @@ RED FLAGS that you MUST detect when present (penalize each occurrence; cite the 
   • Education listed before solid Experience for >2 years experienced candidates
   • Photos, age, marital status, or other personal info that hurts ATS parsing
   • Length: <½ page for experienced or >2 pages for <5 yrs experience
-${hasJd ? "  • Required JD skills/tools/technologies that are completely absent from the resume\n  • Required JD seniority signals missing (e.g. JD wants 'led team' but resume shows only IC work)" : ""}
+${hasJd ? "  • JD skills/tools/technologies explicitly stated in the TARGET JOB DESCRIPTION that are completely absent from the resume (do NOT treat job-title stereotypes as JD requirements)\n  • Required JD seniority signals missing only when the JD explicitly demands them (e.g. JD says 'led team' but resume shows only IC work)" : ""}
 
 PERSONALIZATION RULES (this is what makes the analysis great — non-negotiable):
   1. Every weakness MUST quote the exact phrase or bullet from the resume that triggered it. Format: 'Bullet "<exact phrase from resume>" <reason it's a problem>'.
   2. Every bulletImprovement MUST be a "Before → After" rewrite of an ACTUAL bullet/line from this resume. Format: 'Before: "<exact line from resume>" → After: "<rewritten line with strong verb + metric + outcome>"'. Pick the 4-6 weakest real bullets to rewrite — do NOT invent bullets that aren't in the resume.
   3. Every suggestion MUST be specific and actionable, citing the section or content it applies to. No generic tips like "add metrics" without saying which bullet.
-  4. ${hasJd ? "missingSkills MUST list skills/tools/technologies present in the JD but absent from the resume — quote the JD requirement when listing." : "missingSkills MUST list foundational, role-relevant skills clearly implied by the candidate's domain (e.g. a backend resume missing system design / SQL / cloud) — do NOT speculate advanced stacks unrelated to their actual experience."}
+  4. ${hasJd ? "missingSkills: ONLY skills/tools/technologies/explicit qualifications that the TARGET JOB DESCRIPTION section names as required, preferred, responsibilities, or day-to-day work (verbatim or clear paraphrase of THAT text only). Each item MUST cite the JD with (from JD: short quote). If the JD does not mention a technology, you MUST NOT list it — no 'industry standard', no guessing from job title alone, no '(e.g. AWS, Docker…)' examples unless the JD itself lists those examples. If nothing from the JD is missing from the resume, use an empty array []. Prefer [] or 1–3 real gaps over inventing items to reach a count." : "missingSkills MUST list foundational, role-relevant skills clearly implied by the candidate's domain (e.g. a backend resume missing system design / SQL / cloud) — do NOT speculate advanced stacks unrelated to their actual experience."}
   5. NEVER use vague filler like "if applicable", "etc.", "and more", "consider adding", "you might want to", "tailor your resume" without specifics.
   6. NEVER give generic advice that could apply to any resume. If you can't tie an item to specific resume content, do not include it.
+  7. Do NOT output weaknesses, suggestions, or implied red flags claiming "future dates", "misrepresented dates", or "must label as Upcoming" for any span that falls on or before ${referenceDateUtc} once interpreted per DATE & YEAR INTERPRETATION above (including abbreviated 'YY years and academic year ranges).
 
 Output ONLY valid JSON (no markdown, no preamble), this exact shape:
 {
   "atsScore": number 0-100,
   "weaknesses": string[] (4-6 items, each citing exact resume phrasing),
   "bulletImprovements": string[] (4-6 "Before: ... → After: ..." rewrites of REAL bullets from this resume),
-  "missingSkills": string[] (4-8 specific skills/tools missing for the role),
+  "missingSkills": string[] (${hasJd ? "0-8 ONLY for gaps between THIS JD text and the resume — empty [] when none; never pad generic stacks" : "4-8 specific skills/tools missing for the role"}),
   "suggestions": string[] (5-7 prioritized, section-specific, actionable fixes)
 }
 ${jdBlock}
@@ -249,7 +363,13 @@ ${resumeSnippet}
   if (parsed && typeof parsed.atsScore === "number") {
     const cleanedWeaknesses = uniqueAndConcrete(parsed.weaknesses, 6);
     const cleanedBulletImprovements = uniqueAndConcrete(parsed.bulletImprovements, 6);
-    const cleanedMissingSkills = uniqueAndConcrete(parsed.missingSkills, 8);
+    let cleanedMissingSkills = uniqueAndConcrete(parsed.missingSkills, 8);
+    if (hasJd) {
+      cleanedMissingSkills = filterMissingSkillsGroundedInJd(
+        cleanedMissingSkills,
+        jobContextText.trim()
+      );
+    }
     const cleanedSuggestions = uniqueAndConcrete(parsed.suggestions, 7);
 
     const fallbackSuggestion =
