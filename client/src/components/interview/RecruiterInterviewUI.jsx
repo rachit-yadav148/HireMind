@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Mic, MicOff, Clock, PhoneOff, Volume2, VolumeX, MessageSquare, ChevronDown } from "lucide-react";
 import { api, getApiErrorMessage } from "../../services/api";
 import { useAlwaysOnMic } from "../../hooks/useAlwaysOnMic";
@@ -16,15 +16,18 @@ function formatDuration(totalSeconds) {
 const INACTIVITY_REMIND_MS = 30000;
 const INACTIVITY_END_MS = 120000;
 
-export default function RecruiterInterviewUI({
-  sessionId,
-  initialAiMessage,
-  candidateName,
-  durationMinutes,
-  mode,
-  onEnd,
-  onReport,
-}) {
+const RecruiterInterviewUI = forwardRef(function RecruiterInterviewUI(
+  {
+    sessionId,
+    initialAiMessage,
+    candidateName,
+    durationMinutes,
+    mode,
+    onEnd,
+    onReport,
+  },
+  ref
+) {
   const [micReady, setMicReady] = useState(false);
   const [micPermLoading, setMicPermLoading] = useState(false);
   const [micPermError, setMicPermError] = useState("");
@@ -230,11 +233,6 @@ export default function RecruiterInterviewUI({
   }, [micReady, ended, timeLeft]);
 
   useEffect(() => {
-    if (timeLeft <= 0 && !ended && micReady) handleEndInterview(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, ended, micReady]);
-
-  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -246,6 +244,61 @@ export default function RecruiterInterviewUI({
     }
   }, []);
 
+  const handleEndInterview = useCallback(
+    async (timerTriggered = false, screenShareMeta = null) => {
+      if (endedRef.current) return;
+      endedRef.current = true;
+      setEnded(true);
+      setMicEnabled(false);
+      window.speechSynthesis?.cancel();
+      clearInactivityTimer();
+      try {
+        const { data } = await api.post("/interviews/end", { sessionId });
+        let report = data?.report;
+        if (report && screenShareMeta?.misconduct) {
+          report = {
+            ...report,
+            interviewScore: 0,
+            confidenceScore: 0,
+            communicationScore: 0,
+            technicalDepth: 0,
+            suggestions: [
+              "This interview was terminated due to user misconduct: screen sharing was stopped repeatedly in violation of proctoring rules.",
+              ...(Array.isArray(report.suggestions) ? report.suggestions : []),
+            ],
+          };
+        } else if (report && screenShareMeta?.reason === "screen_share_timeout") {
+          report = {
+            ...report,
+            suggestions: [
+              "Interview ended because screen sharing was not restored within the required time.",
+              ...(Array.isArray(report.suggestions) ? report.suggestions : []),
+            ],
+          };
+        }
+        if (report) onReport?.(report);
+      } catch (err) {
+        setError(getApiErrorMessage(err, "Failed to end interview"));
+      }
+      onEnd?.();
+    },
+    [sessionId, onReport, onEnd, clearInactivityTimer]
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      endInterview: (screenShareMeta) => {
+        void handleEndInterview(false, screenShareMeta || null);
+      },
+    }),
+    [handleEndInterview]
+  );
+
+  useEffect(() => {
+    if (timeLeft <= 0 && !ended && micReady) void handleEndInterview(true);
+  }, [timeLeft, ended, micReady, handleEndInterview]);
+
   const startInactivityTimer = useCallback(() => {
     clearInactivityTimer();
     inactivityTimerRef.current = setTimeout(() => {
@@ -254,10 +307,10 @@ export default function RecruiterInterviewUI({
       addAiReminder(`Hey ${name}, do you want me to repeat the question?`);
       inactivityTimerRef.current = setTimeout(() => {
         if (endedRef.current) return;
-        handleEndInterview(true);
+        void handleEndInterview(true);
       }, INACTIVITY_END_MS - INACTIVITY_REMIND_MS);
     }, INACTIVITY_REMIND_MS);
-  }, [candidateName, clearInactivityTimer]);
+  }, [candidateName, clearInactivityTimer, handleEndInterview]);
 
   useEffect(() => { return () => clearInactivityTimer(); }, [clearInactivityTimer]);
 
@@ -323,7 +376,7 @@ export default function RecruiterInterviewUI({
     } finally {
       setLoading(false);
     }
-  }, [sessionId, candidateName, loading, speakText, startInactivityTimer]);
+  }, [sessionId, candidateName, loading, speakText, startInactivityTimer, handleEndInterview]);
 
   // Mic starts only after opening greeting TTS completes — avoids SR capturing AI audio
   const { listening, transcript, error: micError, stream, pause: micPause, resume: micResume } =
@@ -336,21 +389,6 @@ export default function RecruiterInterviewUI({
   useEffect(() => {
     micRef.current = { pause: micPause, resume: micResume };
   }, [micPause, micResume]);
-
-  async function handleEndInterview(timerTriggered = false) {
-    if (ended) return;
-    setEnded(true);
-    setMicEnabled(false);
-    window.speechSynthesis?.cancel();
-    clearInactivityTimer();
-    try {
-      const { data } = await api.post("/interviews/end", { sessionId });
-      if (data?.report) onReport?.(data.report);
-    } catch (err) {
-      setError(getApiErrorMessage(err, "Failed to end interview"));
-    }
-    onEnd?.();
-  }
 
   const toggleTts = () => {
     if (ttsEnabled) window.speechSynthesis?.cancel();
@@ -505,4 +543,6 @@ export default function RecruiterInterviewUI({
       </div>
     </div>
   );
-}
+});
+
+export default RecruiterInterviewUI;

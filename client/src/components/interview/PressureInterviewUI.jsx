@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Camera, Monitor, AlertTriangle, Eye } from "lucide-react";
 import RecruiterInterviewUI from "./RecruiterInterviewUI";
 
@@ -13,8 +14,10 @@ const HEAD_PITCH_WARN_DEG = 28;
 const HEAD_POSE_CONFIRM_FRAMES = 12;
 const HEAD_WARN_COOLDOWN_MS = 4000;
 const WARNING_DISPLAY_MS = 3000;
-const HEAD_WARN_DEDUCT_THRESHOLD = 10;
+const HEAD_WARN_DEDUCT_THRESHOLD = 5;
 const TAB_SWITCH_DEDUCT_THRESHOLD = 3;
+const SCREEN_SHARE_GRACE_SEC = 20;
+const SCREEN_SHARE_MAX_STOPS = 3;
 
 export default function PressureInterviewUI({
   sessionId,
@@ -39,12 +42,27 @@ export default function PressureInterviewUI({
   const lastHeadWarnRef = useRef(0);
   const warningDismissTimerRef = useRef(null);
   const redFlashTimerRef = useRef(null);
+  const recruiterUiRef = useRef(null);
+  /** Ignore ended/inactive while we intentionally stop tracks (End click / unmount). */
+  const ignoreScreenTrackEndRef = useRef(false);
+  /** Strict Mode runs unmount cleanup once; refs persist — re-allow detection on the next mount. */
+  useLayoutEffect(() => {
+    ignoreScreenTrackEndRef.current = false;
+  }, []);
+  /** Dedupe: track ended, stream inactive, poll, and <video ended> often fire together. */
+  const lastScreenShareStopAtRef = useRef(0);
+  const screenCaptureVideoRef = useRef(null);
 
   // Violation counters (persisted in refs so closures always see latest)
   const headWarningCountRef = useRef(0);
   const tabSwitchCountRef = useRef(0);
+  /** Each time the user stops screen share via the browser UI (not tab switch). */
+  const screenShareStopCountRef = useRef(0);
   const [headWarningCount, setHeadWarningCount] = useState(0);
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [screenShareGate, setScreenShareGate] = useState(null);
+  /** { token, strike, secondsLeft } — token resets countdown effect */
+  const [reshareBusy, setReshareBusy] = useState(false);
 
   // Face detection state
   const calRef = useRef({
@@ -69,6 +87,129 @@ export default function PressureInterviewUI({
 
     warningDismissTimerRef.current = setTimeout(() => setActiveWarning(null), WARNING_DISPLAY_MS);
     redFlashTimerRef.current = setTimeout(() => setShowRedFlash(false), WARNING_DISPLAY_MS);
+  }, []);
+
+  const handleScreenShareEnded = useCallback(() => {
+    if (ignoreScreenTrackEndRef.current) return;
+    const now = Date.now();
+    if (now - lastScreenShareStopAtRef.current < 900) return;
+    lastScreenShareStopAtRef.current = now;
+
+    setScreenStream(null);
+    screenShareStopCountRef.current += 1;
+    const strike = screenShareStopCountRef.current;
+
+    if (strike >= SCREEN_SHARE_MAX_STOPS) {
+      setScreenShareGate(null);
+      showWarning("Interview terminated: screen sharing was stopped repeatedly (misconduct).");
+      recruiterUiRef.current?.endInterview?.({ misconduct: true });
+      return;
+    }
+
+    showWarning("Screen sharing stopped — restore it within 20 seconds or this interview will end.");
+    setScreenShareGate({
+      token: Date.now(),
+      strike,
+      secondsLeft: SCREEN_SHARE_GRACE_SEC,
+    });
+  }, [showWarning]);
+
+  const handleScreenShareEndedRef = useRef(handleScreenShareEnded);
+  useEffect(() => {
+    handleScreenShareEndedRef.current = handleScreenShareEnded;
+  }, [handleScreenShareEnded]);
+
+  /**
+   * Keep a playing <video> fed with the display stream — Safari/Chrome fire `ended` here reliably.
+   */
+  useEffect(() => {
+    const el = screenCaptureVideoRef.current;
+    if (!permissionsReady || !screenStream || !el) {
+      if (el) el.srcObject = null;
+      return;
+    }
+
+    const onVideoEnded = () => handleScreenShareEndedRef.current();
+    el.srcObject = screenStream;
+    el.muted = true;
+    el.setAttribute("playsinline", "");
+    el.play().catch(() => {});
+    el.addEventListener("ended", onVideoEnded);
+
+    return () => {
+      el.removeEventListener("ended", onVideoEnded);
+      el.srcObject = null;
+    };
+  }, [permissionsReady, screenStream]);
+
+  /**
+   * Also listen on the track + stream (behavior differs: Chrome pill vs Safari menu bar).
+   */
+  useEffect(() => {
+    if (!permissionsReady || !screenStream) return;
+
+    const stream = screenStream;
+    const armedAt = Date.now();
+    const ARM_MS = 1200;
+
+    let fired = false;
+    const notify = () => {
+      if (Date.now() - armedAt < ARM_MS) return;
+      if (fired || ignoreScreenTrackEndRef.current) return;
+      fired = true;
+      handleScreenShareEndedRef.current();
+    };
+
+    const mainTrack = stream.getVideoTracks()[0];
+    if (!mainTrack) return;
+
+    mainTrack.addEventListener("ended", notify);
+    try {
+      stream.addEventListener("inactive", notify);
+    } catch {
+      /* very old browsers */
+    }
+    mainTrack.onended = notify;
+    try {
+      stream.oninactive = notify;
+    } catch {
+      /* ignore */
+    }
+
+    const poll = window.setInterval(() => {
+      if (Date.now() - armedAt < ARM_MS) return;
+      if (ignoreScreenTrackEndRef.current) return;
+      const v = stream.getVideoTracks()[0];
+      if (!stream.active || !v || v.readyState === "ended") notify();
+    }, 300);
+
+    return () => {
+      window.clearInterval(poll);
+      mainTrack.removeEventListener("ended", notify);
+      try {
+        stream.removeEventListener("inactive", notify);
+      } catch {
+        /* ignore */
+      }
+      if (mainTrack.onended === notify) mainTrack.onended = null;
+      try {
+        if (stream.oninactive === notify) stream.oninactive = null;
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [permissionsReady, screenStream]);
+
+  const requestScreenShare = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      setScreenStream(stream);
+      setScreenError("");
+      return stream;
+    } catch {
+      setScreenError("Screen sharing denied. You must share your screen for this mode.");
+      return null;
+    }
   }, []);
 
   const attachStream = useCallback((el, stream) => {
@@ -103,28 +244,21 @@ export default function PressureInterviewUI({
     }
   }
 
-  async function requestScreenShare() {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      setScreenStream(stream);
-      setScreenError("");
-      stream.getVideoTracks()[0].onended = () => {
-        setScreenStream(null);
-        tabSwitchCountRef.current++;
-        setTabSwitchCount(tabSwitchCountRef.current);
-        showWarning("Screen sharing stopped! Please share your screen again.");
-      };
-      return stream;
-    } catch {
-      setScreenError("Screen sharing denied. You must share your screen for this mode.");
-      return null;
-    }
-  }
-
   async function setupPermissions() {
     const cam = await requestWebcam();
     const screen = await requestScreenShare();
     if (cam && screen) setPermissionsReady(true);
+  }
+
+  async function handleReshareFromModal() {
+    setReshareBusy(true);
+    setScreenError("");
+    try {
+      const stream = await requestScreenShare();
+      if (stream) setScreenShareGate(null);
+    } finally {
+      setReshareBusy(false);
+    }
   }
 
   // ─── Head tracking using MediaPipe Face Landmarker ───
@@ -376,12 +510,30 @@ export default function PressureInterviewUI({
   useEffect(() => { screenStreamCleanupRef.current = screenStream; }, [screenStream]);
   useEffect(() => {
     return () => {
+      ignoreScreenTrackEndRef.current = true;
       webcamStreamCleanupRef.current?.getTracks().forEach((t) => t.stop());
       screenStreamCleanupRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
+  useEffect(() => {
+    if (!screenShareGate?.token) return;
+    const id = setInterval(() => {
+      setScreenShareGate((g) => {
+        if (!g) return null;
+        const next = (g.secondsLeft ?? SCREEN_SHARE_GRACE_SEC) - 1;
+        if (next <= 0) {
+          recruiterUiRef.current?.endInterview?.({ reason: "screen_share_timeout" });
+          return null;
+        }
+        return { ...g, secondsLeft: next };
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [screenShareGate?.token]);
+
   function handleEnd() {
+    ignoreScreenTrackEndRef.current = true;
     webcamStream?.getTracks().forEach((t) => t.stop());
     screenStream?.getTracks().forEach((t) => t.stop());
     clearTimeout(warningDismissTimerRef.current);
@@ -428,15 +580,25 @@ export default function PressureInterviewUI({
       pressureViolations: {
         headWarnings: hw,
         tabSwitches: ts,
+        screenShareStops: screenShareStopCountRef.current,
         totalDeduction: deduction,
         reasons: deductionReasons,
       },
     });
   }
 
-  // ─── Permission gate ───
-  if (!permissionsReady) {
-    return (
+  // ─── Permission gate + interview — hidden capture <video> must always be in DOM for ref + ended events ───
+  return (
+    <>
+      <video
+        ref={screenCaptureVideoRef}
+        muted
+        playsInline
+        autoPlay
+        className="pointer-events-none fixed left-0 top-0 h-px w-px max-h-px max-w-px overflow-hidden opacity-0"
+        aria-hidden
+      />
+      {!permissionsReady ? (
       <div className="rounded-2xl border border-slate-800 bg-slate-950 p-8 max-w-lg mx-auto text-center">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-500/20 mb-5">
           <Eye className="w-8 h-8 text-red-400" />
@@ -472,11 +634,48 @@ export default function PressureInterviewUI({
           Grant Permissions & Start
         </button>
       </div>
-    );
-  }
-
-  return (
+      ) : (
     <div className="relative">
+      {screenShareGate &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 p-4"
+            style={{ isolation: "isolate" }}
+          >
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="screen-share-gate-title"
+              className="w-full max-w-md rounded-2xl border-2 border-red-500 bg-gradient-to-b from-red-950 to-slate-950 p-6 shadow-2xl shadow-red-900/40"
+            >
+              <h3 id="screen-share-gate-title" className="text-lg font-bold text-red-200 mb-2">
+                Screen sharing required
+              </h3>
+              <p className="text-sm text-red-100/95 mb-1">
+                You stopped sharing your screen. You must share again to continue this proctored interview.
+              </p>
+              <p className="text-3xl font-mono font-bold text-white text-center my-4 tabular-nums">
+                {screenShareGate.secondsLeft}s
+              </p>
+              <p className="text-xs text-amber-200/90 mb-4">
+                Incident {screenShareGate.strike} of {SCREEN_SHARE_MAX_STOPS}. Stopping screen share{" "}
+                {SCREEN_SHARE_MAX_STOPS} times ends the interview for misconduct.
+              </p>
+              {screenError && <p className="text-xs text-red-300 mb-3">{screenError}</p>}
+              <button
+                type="button"
+                onClick={() => void handleReshareFromModal()}
+                disabled={reshareBusy}
+                className="w-full font-semibold bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white py-3 rounded-xl transition-colors"
+              >
+                {reshareBusy ? "Opening picker…" : "Share screen again now"}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
       {/* Red flash overlay — 3s duration */}
       {showRedFlash && (
         <div
@@ -550,6 +749,7 @@ export default function PressureInterviewUI({
       </div>
 
       <RecruiterInterviewUI
+        ref={recruiterUiRef}
         sessionId={sessionId}
         initialAiMessage={initialAiMessage}
         candidateName={candidateName}
@@ -559,5 +759,7 @@ export default function PressureInterviewUI({
         onReport={handleReport}
       />
     </div>
+      )}
+    </>
   );
 }
