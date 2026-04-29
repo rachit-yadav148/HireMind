@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -40,22 +40,67 @@ const TIMER_OPTIONS = [
   { label: "2 hours", value: 120 },
 ];
 
+/** WebKit (Safari): avoid opacity-0 "hidden" variants — nested stagger often never completes, so the report stays invisible. */
 const REPORT_STAGGER = {
-  hidden: { opacity: 0 },
+  hidden: { opacity: 1 },
   visible: {
     opacity: 1,
-    transition: { staggerChildren: 0.055, delayChildren: 0.06 },
+    transition: { staggerChildren: 0.04, delayChildren: 0.04 },
   },
 };
 
 const REPORT_ITEM = {
-  hidden: { opacity: 0, y: 18 },
+  hidden: { opacity: 1, y: 0 },
   visible: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.42, ease: [0.22, 1, 0.36, 1] },
+    transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
   },
 };
+
+/** Coerce API / merged client report so renders never throw on missing fields (Safari was blank-screening on .map crashes). */
+function normalizeInterviewReport(raw) {
+  if (raw == null || typeof raw !== "object") {
+    return {
+      interviewScore: 0,
+      communicationScore: 0,
+      technicalDepth: 0,
+      confidenceScore: 0,
+      suggestions: [],
+    };
+  }
+
+  const suggestions = Array.isArray(raw.suggestions)
+    ? raw.suggestions
+        .map((s) => (typeof s === "string" ? s : String(s ?? "")))
+        .filter((s) => s.length > 0)
+    : [];
+
+  let pressureViolations;
+  const pv = raw.pressureViolations;
+  if (pv != null && typeof pv === "object") {
+    const reasons = Array.isArray(pv.reasons)
+      ? pv.reasons.map((r) => (typeof r === "string" ? r : String(r ?? ""))).filter(Boolean)
+      : [];
+    const totalDeduction = Number(pv.totalDeduction) || 0;
+    pressureViolations = {
+      headWarnings: Number(pv.headWarnings) || 0,
+      tabSwitches: Number(pv.tabSwitches) || 0,
+      screenShareStops: Number(pv.screenShareStops) || 0,
+      totalDeduction,
+      reasons: totalDeduction > 0 && reasons.length === 0 ? ["Proctoring adjustments applied."] : reasons,
+    };
+  }
+
+  return {
+    interviewScore: Number(raw.interviewScore) || 0,
+    communicationScore: Number(raw.communicationScore) || 0,
+    technicalDepth: Number(raw.technicalDepth) || 0,
+    confidenceScore: Number(raw.confidenceScore) || 0,
+    suggestions,
+    ...(pressureViolations ? { pressureViolations } : {}),
+  };
+}
 
 function formatDuration(totalSeconds) {
   const safe = Math.max(0, Number(totalSeconds) || 0);
@@ -87,6 +132,9 @@ export default function InterviewSimulator() {
   const { refreshCredits } = useCredits();
   const jdInputRef = useRef(null);
   const resumeInputRef = useRef(null);
+  const reportSectionRef = useRef(null);
+  /** Unique SVG defs id — duplicate #ids break gradient strokes in Safari. */
+  const scoreDashGradientId = `scoreDashGrad-${useId().replace(/:/g, "")}`;
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [jdFile, setJdFile] = useState(null);
@@ -146,6 +194,15 @@ export default function InterviewSimulator() {
     };
   }, [report]);
 
+  /** Safari + Framer: report must be scrolled into view after unmounting the interview UI layer. */
+  useEffect(() => {
+    if (!report) return;
+    const t = window.setTimeout(() => {
+      reportSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [report]);
+
   const remainingFreeInterviewSeconds =
     trialStatus?.mode === "guest"
       ? Math.max(0, Number(trialStatus.interviewSecondsLeft ?? 0))
@@ -166,7 +223,7 @@ export default function InterviewSimulator() {
     ? "-mx-4 sm:-mx-6 md:-mx-10 min-h-screen bg-chromatic px-4 py-6 sm:px-6 md:px-10"
     : "";
   const innerShellClass = guestMode
-    ? "relative mx-auto w-full max-w-5xl overflow-hidden pb-14"
+    ? `relative mx-auto w-full max-w-5xl ${report ? "overflow-visible" : "overflow-hidden"} pb-14`
     : "mx-auto w-full max-w-5xl pb-10";
   const surfaceClass = guestMode
     ? "rounded-3xl border border-slate-700/60 bg-slate-900/35 backdrop-blur-sm shadow-card"
@@ -506,7 +563,7 @@ export default function InterviewSimulator() {
 
       if (data.completed && data.report) {
         const answeredCount = messages.filter((m) => m.role === "you").length + 1;
-        setReport(data.report);
+        setReport(normalizeInterviewReport(data.report));
         setTimerActive(false);
         setCurrentQuestion("");
         posthog.capture("interview_completed", {
@@ -548,7 +605,7 @@ export default function InterviewSimulator() {
       const { data } = await api.post("/interviews/end", { sessionId });
       if (data?.report) {
         const answeredCount = messages.filter((m) => m.role === "you").length;
-        setReport(data.report);
+        setReport(normalizeInterviewReport(data.report));
         setTimerActive(false);
         setCurrentQuestion("");
         posthog.capture("interview_completed", {
@@ -812,7 +869,7 @@ export default function InterviewSimulator() {
               onEnd={() => {}}
               onReport={(r) => {
                 setSessionId(conversationalSession.sessionId);
-                setReport(r);
+                setReport(normalizeInterviewReport(r));
                 setConversationalSession(null);
               }}
             />
@@ -826,7 +883,7 @@ export default function InterviewSimulator() {
               onEnd={() => {}}
               onReport={(r) => {
                 setSessionId(conversationalSession.sessionId);
-                setReport(r);
+                setReport(normalizeInterviewReport(r));
                 setConversationalSession(null);
               }}
             />
@@ -960,21 +1017,23 @@ export default function InterviewSimulator() {
 
       {report && (
         <motion.div
-          initial={{ opacity: 0, y: 28 }}
+          ref={reportSectionRef}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className={`relative z-10 mx-auto max-w-3xl overflow-hidden ${
+          transition={{ duration: 0.35 }}
+          className={`relative z-10 mx-auto max-w-3xl overflow-visible ${
             guestMode
               ? "rounded-3xl border border-white/10 bg-slate-900/45 backdrop-blur-xl shadow-2xl ring-1 ring-white/[0.06]"
               : "rounded-3xl border border-slate-700/60 bg-slate-900/50 backdrop-blur-xl shadow-2xl ring-1 ring-white/[0.04]"
           }`}
+          style={{ isolation: "isolate" }}
         >
           <div className="pointer-events-none absolute -top-28 right-0 h-72 w-72 rounded-full bg-gradient-to-br from-cyan-500/25 via-brand-500/15 to-transparent blur-3xl" />
           <div className="pointer-events-none absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-gradient-to-tr from-violet-600/20 to-transparent blur-3xl" />
 
           <motion.div
             variants={REPORT_STAGGER}
-            initial="hidden"
+            initial={false}
             animate="visible"
             className="relative px-5 py-8 sm:px-8 sm:py-10 md:px-10 md:py-12"
           >
@@ -999,7 +1058,7 @@ export default function InterviewSimulator() {
               {report.pressureViolations?.totalDeduction > 0 && (
                 <motion.div
                   variants={REPORT_ITEM}
-                  initial={{ opacity: 0, scale: 0.98 }}
+                  initial={false}
                   animate={{ opacity: 1, scale: 1 }}
                   className="mb-8 rounded-2xl border border-red-500/35 bg-gradient-to-br from-red-950/50 to-red-950/20 p-5 backdrop-blur-sm shadow-lg shadow-red-950/20"
                 >
@@ -1010,7 +1069,7 @@ export default function InterviewSimulator() {
                     </p>
                   </div>
                   <ul className="space-y-2 text-sm text-red-200/85 mb-4">
-                    {report.pressureViolations.reasons.map((r, i) => (
+                    {(report.pressureViolations.reasons ?? []).map((r, i) => (
                       <li key={i} className="flex gap-2 pl-0.5">
                         <span className="text-red-400/90 mt-1.5 h-1 w-1 shrink-0 rounded-full bg-red-400" />
                         <span>{r}</span>
@@ -1075,14 +1134,14 @@ export default function InterviewSimulator() {
                         cy="60"
                         r="52"
                         fill="none"
-                        stroke="url(#scoreGradInterview)"
+                        stroke={`url(#${scoreDashGradientId})`}
                         strokeWidth="8"
                         strokeLinecap="round"
                         strokeDasharray={`${((animatedMainScore / 100) * 326.73).toFixed(2)} 326.73`}
                         className="transition-[stroke-dasharray] duration-300 ease-out"
                       />
                       <defs>
-                        <linearGradient id="scoreGradInterview" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <linearGradient id={scoreDashGradientId} x1="0%" y1="0%" x2="100%" y2="100%">
                           <stop offset="0%" stopColor="#22d3ee" />
                           <stop offset="55%" stopColor="#6366f1" />
                           <stop offset="100%" stopColor="#a78bfa" />
@@ -1137,9 +1196,9 @@ export default function InterviewSimulator() {
                   return (
                 <motion.div
                   key={x.label}
-                  initial={{ opacity: 0, y: 14 }}
+                  initial={false}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15 + idx * 0.06, duration: 0.4 }}
+                  transition={{ duration: 0.25 }}
                   whileHover={{ y: -3, transition: { duration: 0.2 } }}
                   className={`rounded-2xl border bg-gradient-to-br ${x.tint} p-5 backdrop-blur-sm`}
                 >
@@ -1171,14 +1230,15 @@ export default function InterviewSimulator() {
               </div>
               <ul className="space-y-3">
                 {(report.suggestions || []).map((s, i) => {
-                  const isPenalty = s.startsWith("[Pressure Mode Penalty]");
-                  const text = isPenalty ? s.replace("[Pressure Mode Penalty] ", "") : s;
+                  const line = typeof s === "string" ? s : String(s ?? "");
+                  const isPenalty = line.startsWith("[Pressure Mode Penalty]");
+                  const text = isPenalty ? line.replace("[Pressure Mode Penalty] ", "") : line;
                   return (
                     <motion.li
                       key={i}
-                      initial={{ opacity: 0, x: -8 }}
+                      initial={false}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.08 + i * 0.04 }}
+                      transition={{ duration: 0.2 }}
                       className={`flex gap-3 rounded-xl border px-4 py-3.5 text-sm leading-relaxed ${
                         isPenalty
                           ? "border-red-500/25 bg-red-950/30 text-red-100"

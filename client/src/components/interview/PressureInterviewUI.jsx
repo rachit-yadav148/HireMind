@@ -3,7 +3,14 @@ import { createPortal } from "react-dom";
 import { Camera, Monitor, AlertTriangle, Eye } from "lucide-react";
 import RecruiterInterviewUI from "./RecruiterInterviewUI";
 
-const VISIBILITY_WARN_DELAY_MS = 500;
+/** Require page hidden this long before counting (Safari flashes hidden during mic / permission UI) */
+const PAGE_HIDDEN_DEBOUNCE_MS = 2200;
+/** Blur briefly during system dialogs — only count blur after sustained loss */
+const BLUR_PENALTY_DEBOUNCE_MS = 1400;
+/** Ignore tab/blur penalties while pressure UI + Safari permission flow settles */
+const PROCTOR_SURFACE_SUPPRESS_MS = 120_000;
+/** Extra window after microphone is granted — covers focus return + opening TTS */
+const PROCTOR_MIC_SETTLE_SUPPRESS_MS = 55_000;
 const CALIBRATION_FRAMES = 20;
 /** Low-pass on pose angles — dampens jitter from the tracker */
 const HEAD_POSE_SMOOTH_ALPHA = 0.22;
@@ -18,6 +25,33 @@ const HEAD_WARN_DEDUCT_THRESHOLD = 5;
 const TAB_SWITCH_DEDUCT_THRESHOLD = 3;
 const SCREEN_SHARE_GRACE_SEC = 20;
 const SCREEN_SHARE_MAX_STOPS = 3;
+
+const CAM_CONSTRAINTS = {
+  video: {
+    facingMode: "user",
+    width: { ideal: 320 },
+    height: { ideal: 240 },
+  },
+  audio: false,
+};
+
+const DISPLAY_CONSTRAINTS = { video: true, audio: false };
+
+function exitFullscreenDocument() {
+  const doc = document;
+  const fsEl = doc.fullscreenElement ?? doc.webkitFullscreenElement;
+  if (!fsEl) return;
+  const exit =
+    doc.exitFullscreen ||
+    doc.webkitExitFullscreen ||
+    doc.webkitCancelFullScreen;
+  try {
+    const p = exit?.call(doc);
+    if (p?.catch) p.catch(() => {});
+  } catch {
+    /* ignore — Safari throws "Not in fullscreen" if racing with user exit */
+  }
+}
 
 export default function PressureInterviewUI({
   sessionId,
@@ -34,15 +68,22 @@ export default function PressureInterviewUI({
   const [activeWarning, setActiveWarning] = useState(null);
   const [showRedFlash, setShowRedFlash] = useState(false);
   const [permissionsReady, setPermissionsReady] = useState(false);
+  const [screenGrantBusy, setScreenGrantBusy] = useState(false);
+  const [cameraGrantBusy, setCameraGrantBusy] = useState(false);
   const [headTrackingActive, setHeadTrackingActive] = useState(false);
 
   const webcamStreamRef = useRef(null);
   const videoRef = useRef(null);
-  const warningTimerRef = useRef(null);
   const lastHeadWarnRef = useRef(0);
   const warningDismissTimerRef = useRef(null);
   const redFlashTimerRef = useRef(null);
   const recruiterUiRef = useRef(null);
+  /** Dedupe simultaneous blur + visibility spikes (Safari shows both on permission / sheet close) */
+  const lastTabPenaltyAtRef = useRef(0);
+  const blurPenaltyTimerRef = useRef(null);
+  const hiddenPenaltyTimerRef = useRef(null);
+  /** Timestamp (ms): do not penalize blur/hidden tab switches until this moment */
+  const suppressProctorUntilRef = useRef(0);
   /** Ignore ended/inactive while we intentionally stop tracks (End click / unmount). */
   const ignoreScreenTrackEndRef = useRef(false);
   /** Strict Mode runs unmount cleanup once; refs persist — re-allow detection on the next mount. */
@@ -202,7 +243,7 @@ export default function PressureInterviewUI({
 
   const requestScreenShare = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const stream = await navigator.mediaDevices.getDisplayMedia(DISPLAY_CONSTRAINTS);
       setScreenStream(stream);
       setScreenError("");
       return stream;
@@ -228,26 +269,53 @@ export default function PressureInterviewUI({
     if (videoRef.current && webcamStream) attachStream(videoRef.current, webcamStream);
   }, [webcamStream, attachStream]);
 
-  async function requestWebcam() {
+  /**
+   * WebKit deadlock: invoking getUserMedia and getDisplayMedia in parallel Promise.all(Settled)
+   * can leave one or both promises pending forever → UI stuck on "Opening…".
+   * Each capture must run from its own user gesture (Safari/Chromium-stable).
+   */
+  async function grantScreenOnly() {
+    if (screenGrantBusy || screenStream) return;
+    setScreenGrantBusy(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 } },
-        audio: false,
-      });
+      await requestScreenShare();
+    } finally {
+      setScreenGrantBusy(false);
+    }
+  }
+
+  async function grantCameraOnly() {
+    if (cameraGrantBusy || webcamStream) return;
+    setWebcamError("");
+    setCameraGrantBusy(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(CAM_CONSTRAINTS);
       webcamStreamRef.current = stream;
       setWebcamStream(stream);
       setWebcamError("");
       return stream;
     } catch {
-      setWebcamError("Camera permission denied. Enable camera in browser settings.");
+      setWebcamError("Camera permission denied. Check site/browser settings for camera access.");
       return null;
+    } finally {
+      setCameraGrantBusy(false);
     }
   }
 
-  async function setupPermissions() {
-    const cam = await requestWebcam();
-    const screen = await requestScreenShare();
-    if (cam && screen) setPermissionsReady(true);
+  function beginInterviewAfterDevicesReady() {
+    if (!screenStream || !webcamStream) return;
+    setPermissionsReady(true);
+  }
+
+  /** Stop orphaned tracks if user granted one device then abandons refresh */
+  function resetSetupStreams() {
+    webcamStream?.getTracks().forEach((t) => t.stop());
+    screenStream?.getTracks().forEach((t) => t.stop());
+    webcamStreamRef.current = null;
+    setWebcamStream(null);
+    setScreenStream(null);
+    setWebcamError("");
+    setScreenError("");
   }
 
   async function handleReshareFromModal() {
@@ -291,17 +359,26 @@ export default function PressureInterviewUI({
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
         );
 
-        const landmarker = await FaceLandmarker.createFromOptions(fileset, {
-          baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU",
-          },
-          runningMode: "VIDEO",
-          numFaces: 3, // detect up to 3 to catch "multiple faces in frame"
-          outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: true,
-        });
+        async function createLandmarker(delegate) {
+          return FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+              delegate,
+            },
+            runningMode: "VIDEO",
+            numFaces: 3, // detect up to 3 to catch "multiple faces in frame"
+            outputFaceBlendshapes: false,
+            outputFacialTransformationMatrixes: true,
+          });
+        }
+
+        let landmarker;
+        try {
+          landmarker = await createLandmarker("GPU");
+        } catch {
+          landmarker = await createLandmarker("CPU");
+        }
 
         if (cancelled) {
           landmarker.close();
@@ -469,37 +546,91 @@ export default function PressureInterviewUI({
     };
   }, [permissionsReady, webcamStream, showWarning]);
 
+  const handleInterviewMicReady = useCallback(() => {
+    suppressProctorUntilRef.current = Date.now() + PROCTOR_MIC_SETTLE_SUPPRESS_MS;
+  }, []);
+
+  useEffect(() => {
+    if (!permissionsReady) return;
+    suppressProctorUntilRef.current = Date.now() + PROCTOR_SURFACE_SUPPRESS_MS;
+  }, [permissionsReady]);
+
+  function shouldSuppressProctorSignals() {
+    return Date.now() < suppressProctorUntilRef.current;
+  }
+
   // ─── Tab visibility / window blur detection ───
   useEffect(() => {
     if (!permissionsReady) return;
 
+    function clearDeferTimers() {
+      clearTimeout(blurPenaltyTimerRef.current);
+      clearTimeout(hiddenPenaltyTimerRef.current);
+      blurPenaltyTimerRef.current = null;
+      hiddenPenaltyTimerRef.current = null;
+    }
+
+    function applyTabPenalty(reason) {
+      if (shouldSuppressProctorSignals()) return;
+      const now = Date.now();
+      if (now - lastTabPenaltyAtRef.current < 2600) return;
+      lastTabPenaltyAtRef.current = now;
+
+      tabSwitchCountRef.current++;
+      setTabSwitchCount(tabSwitchCountRef.current);
+      showWarning(
+        reason === "hidden"
+          ? "🚫 Tab switching detected! Stay on this tab during the interview."
+          : "🚫 Window focus lost! Do not switch to other applications.",
+      );
+    }
+
     function handleVisibilityChange() {
-      if (document.hidden) {
-        warningTimerRef.current = setTimeout(() => {
-          tabSwitchCountRef.current++;
-          setTabSwitchCount(tabSwitchCountRef.current);
-          showWarning("🚫 Tab switching detected! Stay on this tab during the interview.");
-        }, VISIBILITY_WARN_DELAY_MS);
-      } else {
-        if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+      if (!document.hidden) {
+        clearTimeout(hiddenPenaltyTimerRef.current);
+        hiddenPenaltyTimerRef.current = null;
+        clearTimeout(blurPenaltyTimerRef.current);
+        blurPenaltyTimerRef.current = null;
+        return;
       }
+
+      hiddenPenaltyTimerRef.current = setTimeout(() => {
+        hiddenPenaltyTimerRef.current = null;
+        if (!document.hidden) return;
+        if (shouldSuppressProctorSignals()) return;
+        applyTabPenalty("hidden");
+      }, PAGE_HIDDEN_DEBOUNCE_MS);
     }
 
     function handleBlur() {
-      tabSwitchCountRef.current++;
-      setTabSwitchCount(tabSwitchCountRef.current);
-      showWarning("🚫 Window focus lost! Do not switch to other applications.");
+      clearTimeout(blurPenaltyTimerRef.current);
+      blurPenaltyTimerRef.current = setTimeout(() => {
+        blurPenaltyTimerRef.current = null;
+        if (shouldSuppressProctorSignals()) return;
+        if (!document.hidden && document.visibilityState === "visible" && document.hasFocus?.()) return;
+        applyTabPenalty("blur");
+      }, BLUR_PENALTY_DEBOUNCE_MS);
     }
+
+    function handleFocusOrGain() {
+      clearTimeout(blurPenaltyTimerRef.current);
+      blurPenaltyTimerRef.current = null;
+    }
+
+    /** No auto-fullscreen — Safari triggers blur/hidden overlays during enter/exit and confuses tab detection. */
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("blur", handleBlur);
-    try { document.documentElement.requestFullscreen?.(); } catch { /* ignore */ }
+    window.addEventListener("focus", handleFocusOrGain);
+    document.addEventListener("pointerdown", handleFocusOrGain, true);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("blur", handleBlur);
-      if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
-      try { document.exitFullscreen?.(); } catch { /* ignore */ }
+      window.removeEventListener("focus", handleFocusOrGain);
+      document.removeEventListener("pointerdown", handleFocusOrGain, true);
+      clearDeferTimers();
+      exitFullscreenDocument();
     };
   }, [permissionsReady, showWarning]);
 
@@ -538,7 +669,7 @@ export default function PressureInterviewUI({
     screenStream?.getTracks().forEach((t) => t.stop());
     clearTimeout(warningDismissTimerRef.current);
     clearTimeout(redFlashTimerRef.current);
-    try { document.exitFullscreen?.(); } catch { /* ignore */ }
+    exitFullscreenDocument();
     onEnd?.();
   }
 
@@ -627,11 +758,53 @@ export default function PressureInterviewUI({
         {webcamError && <p className="text-sm text-red-400 mb-3">{webcamError}</p>}
         {screenError && <p className="text-sm text-red-400 mb-3">{screenError}</p>}
 
+        <p className="text-xs text-slate-500 mb-5 text-left leading-relaxed">
+          <span className="text-slate-400">Safari-friendly setup:</span> use the two buttons below (any order).
+          Each picker must open from its own tap — avoids a known WebKit freeze when requesting camera and screen at once.
+        </p>
+
+        <div className="flex flex-col gap-3 mb-5">
+          <button
+            type="button"
+            onClick={() => void grantScreenOnly()}
+            disabled={screenGrantBusy || Boolean(screenStream)}
+            className="w-full font-semibold rounded-xl py-3 px-4 transition-all bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white border border-slate-600"
+          >
+            {screenGrantBusy
+              ? "Opening screen picker…"
+              : screenStream
+                ? "Screen sharing ✓"
+                : "① Share screen"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void grantCameraOnly()}
+            disabled={cameraGrantBusy || Boolean(webcamStream)}
+            className="w-full font-semibold rounded-xl py-3 px-4 transition-all bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white border border-slate-600"
+          >
+            {cameraGrantBusy
+              ? "Opening camera…"
+              : webcamStream
+                ? "Camera ✓"
+                : "② Allow camera"}
+          </button>
+        </div>
+
         <button
-          onClick={setupPermissions}
-          className="w-full font-semibold bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-400 hover:to-orange-400 text-white py-3 rounded-xl transition-all"
+          type="button"
+          onClick={() => beginInterviewAfterDevicesReady()}
+          disabled={!screenStream || !webcamStream}
+          className="w-full font-semibold bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-400 hover:to-orange-400 disabled:opacity-40 disabled:cursor-not-allowed text-white py-3 rounded-xl transition-all"
         >
-          Grant Permissions & Start
+          Start Pressure Interview
+        </button>
+
+        <button
+          type="button"
+          onClick={() => resetSetupStreams()}
+          className="mt-3 text-xs text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline"
+        >
+          Reset and try again
         </button>
       </div>
       ) : (
@@ -755,6 +928,7 @@ export default function PressureInterviewUI({
         candidateName={candidateName}
         durationMinutes={durationMinutes}
         mode="pressure"
+        onInterviewMicReady={handleInterviewMicReady}
         onEnd={handleEnd}
         onReport={handleReport}
       />

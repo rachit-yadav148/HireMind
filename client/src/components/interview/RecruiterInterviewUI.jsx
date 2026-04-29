@@ -25,6 +25,8 @@ const RecruiterInterviewUI = forwardRef(function RecruiterInterviewUI(
     mode,
     onEnd,
     onReport,
+    /** Pressure mode: microphone just became ready — parent can suppress false proctor penalties (Safari) */
+    onInterviewMicReady,
   },
   ref
 ) {
@@ -194,6 +196,11 @@ const RecruiterInterviewUI = forwardRef(function RecruiterInterviewUI(
 
     setMicPermLoading(false);
     setMicReady(true);
+    try {
+      onInterviewMicReady?.();
+    } catch {
+      /* ignore */
+    }
   }
 
   // ─── Greeting ───
