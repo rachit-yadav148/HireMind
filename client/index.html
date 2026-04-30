@@ -2,12 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- No data: URIs — Safari ignores them for tab icons; use plain files (+ clear Safari’s Favicon Cache for localhost once). -->
+    <!-- Favicons (desktop tabs) -->
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="any" />
     <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+
+    <!-- iOS / iPadOS: Safari still probes /apple-touch-icon.png at root; precomposed keeps old iOS happy -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152.png" />
+    <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon-precomposed.png" />
+
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#020617" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="HireMind" />
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HireMind — AI Career Prep</title>

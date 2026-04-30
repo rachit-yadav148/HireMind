@@ -7,15 +7,19 @@ function faviconNoCacheDevPlugin() {
     "/favicon.ico",
     "/favicon-32.png",
     "/favicon-48.png",
-    "/apple-touch-icon.png",
     "/favicon.svg",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/apple-touch-icon-152.png",
+    "/apple-touch-icon-167.png",
+    "/site.webmanifest",
   ]);
   return {
     name: "favicon-no-store-dev",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const u = req.url?.split("?")[0] ?? "";
-        if (paths.has(u)) {
+        if (paths.has(u) || u.startsWith("/icons/")) {
           res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
         }
         next();
