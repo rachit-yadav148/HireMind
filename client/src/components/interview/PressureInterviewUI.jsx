@@ -37,15 +37,32 @@ const CAM_CONSTRAINTS = {
   audio: false,
 };
 
-const DISPLAY_CONSTRAINTS = (() => {
-  const base = { video: true, audio: false };
-  if (typeof navigator === "undefined") return base;
+const DISPLAY_CONSTRAINTS = { video: true, audio: false };
+
+/** WebKit often deadlocks if screen + camera prompts overlap; also unblocks UI if a dialog never resolves */
+const MEDIA_PERMISSION_DIALOG_TIMEOUT_MS = 90_000;
+
+async function promiseWithTimeout(promise, ms) {
+  let id;
+  const timeout = new Promise((_, reject) => {
+    id = window.setTimeout(() => {
+      const e = new Error("Permission request timed out");
+      e.name = "TimeoutError";
+      reject(e);
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (id != null) window.clearTimeout(id);
+  }
+}
+
+function isLikelyWebKitSafari() {
+  if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
-  /** True WebKit Safari (not Chrome/Edge/Chromium) — use only well-supported keys */
-  const safariOnly = /Safari/i.test(ua) && !/(Chrome|Chromium|Edg)\//i.test(ua);
-  if (safariOnly) return base;
-  return { ...base, preferCurrentTab: true };
-})();
+  return /Safari/i.test(ua) && !/(Chrome|Chromium|Edg)\//i.test(ua);
+}
 
 function exitFullscreenDocument() {
   const doc = document;
@@ -84,6 +101,8 @@ export default function PressureInterviewUI({
   onEnd,
   onReport,
 }) {
+  const safariBrowser = isLikelyWebKitSafari();
+
   const [webcamStream, setWebcamStream] = useState(null);
   const [webcamError, setWebcamError] = useState("");
   const [screenStream, setScreenStream] = useState(null);
@@ -265,12 +284,25 @@ export default function PressureInterviewUI({
   }, [permissionsReady, screenStream]);
 
   const requestScreenShare = useCallback(async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setScreenError("Screen sharing is not available in this browser.");
+      return null;
+    }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia(DISPLAY_CONSTRAINTS);
+      const stream = await promiseWithTimeout(
+        navigator.mediaDevices.getDisplayMedia(DISPLAY_CONSTRAINTS),
+        MEDIA_PERMISSION_DIALOG_TIMEOUT_MS,
+      );
       setScreenStream(stream);
       setScreenError("");
       return stream;
-    } catch {
+    } catch (err) {
+      if (err?.name === "TimeoutError") {
+        setScreenError(
+          "Screen share is taking too long. Dismiss any hidden Safari prompts, click Reset and try again — use only one permission button at a time.",
+        );
+        return null;
+      }
       setScreenError("Screen sharing denied. You must share your screen for this mode.");
       return null;
     }
@@ -293,20 +325,22 @@ export default function PressureInterviewUI({
   }, [webcamStream, attachStream]);
 
   /**
-   * WebKit deadlock: invoking getUserMedia and getDisplayMedia in parallel Promise.all(Settled)
-   * can leave one or both promises pending forever → UI stuck on "Opening…".
-   * Each capture must run from its own user gesture (Safari/Chromium-stable).
-   *
-   * IMPORTANT (Safari): do NOT enter fullscreen before the screen-share or camera dialogs.
-   * requestFullscreen pushes the browser into a separate full-screen Space; WebKit often shows
-   * the picker away from your tab so it feels like “another blank window/tab”. Fullscreen runs
-   * only from "Start Pressure Interview" after both streams are granted.
+   * Chrome / Edge / etc.: fullscreen around the picker matches the original “locked” journey.
+   * WebKit Safari: fullscreen *before* getDisplayMedia splits the picker into another window/Space — skip until both devices are ready, then Start Pressure Interview requests fullscreen.
    */
   async function grantScreenOnly() {
     if (screenGrantBusy || screenStream) return;
+    if (safariBrowser && cameraGrantBusy) return;
+    const safari = isLikelyWebKitSafari();
+    if (!safari) {
+      requestFullscreenFromUserGesture(document.documentElement);
+    }
     setScreenGrantBusy(true);
     try {
       await requestScreenShare();
+      if (!safari) {
+        requestFullscreenFromUserGesture(document.documentElement);
+      }
     } finally {
       setScreenGrantBusy(false);
     }
@@ -314,15 +348,29 @@ export default function PressureInterviewUI({
 
   async function grantCameraOnly() {
     if (cameraGrantBusy || webcamStream) return;
+    if (safariBrowser && screenGrantBusy) return;
     setWebcamError("");
     setCameraGrantBusy(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(CAM_CONSTRAINTS);
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setWebcamError("Camera API not available. Try Safari settings → Websites → Camera for localhost.");
+        return null;
+      }
+      const stream = await promiseWithTimeout(
+        navigator.mediaDevices.getUserMedia(CAM_CONSTRAINTS),
+        MEDIA_PERMISSION_DIALOG_TIMEOUT_MS,
+      );
       webcamStreamRef.current = stream;
       setWebcamStream(stream);
       setWebcamError("");
       return stream;
-    } catch {
+    } catch (err) {
+      if (err?.name === "TimeoutError") {
+        setWebcamError(
+          "Camera permission is taking too long. Close any open Safari prompts, click Reset, finish screen share first, then try Allow camera.",
+        );
+        return null;
+      }
       setWebcamError("Camera permission denied. Check site/browser settings for camera access.");
       return null;
     } finally {
@@ -338,6 +386,8 @@ export default function PressureInterviewUI({
 
   /** Stop orphaned tracks if user granted one device then abandons refresh */
   function resetSetupStreams() {
+    setScreenGrantBusy(false);
+    setCameraGrantBusy(false);
     webcamStream?.getTracks().forEach((t) => t.stop());
     screenStream?.getTracks().forEach((t) => t.stop());
     webcamStreamRef.current = null;
@@ -348,7 +398,10 @@ export default function PressureInterviewUI({
   }
 
   async function handleReshareFromModal() {
-    /* Do not fullscreen before picker — same Safari Space/picker separation as setup flow. */
+    const safari = isLikelyWebKitSafari();
+    if (!safari) {
+      requestFullscreenFromUserGesture(document.documentElement);
+    }
     setReshareBusy(true);
     setScreenError("");
     try {
@@ -813,18 +866,25 @@ export default function PressureInterviewUI({
         {webcamError && <p className="text-sm text-red-400 mb-3">{webcamError}</p>}
         {screenError && <p className="text-sm text-red-400 mb-3">{screenError}</p>}
 
-        <p className="text-xs text-slate-500 mb-5 text-left leading-relaxed">
-          <span className="text-slate-400">Safari:</span> use <strong className="text-slate-300">Share screen</strong> and{" "}
-          <strong className="text-slate-300">Allow camera</strong> here in <strong className="text-slate-300">this same tab</strong> (we wait until you tap{" "}
-          <strong className="text-slate-300">Start Pressure Interview</strong> before fullscreen so system prompts are not split across a blank Safari window).{" "}
-          After the interview starts, stay in fullscreen on this tab until you tap <strong className="text-slate-300">End</strong> — switching away is logged.
-        </p>
+        {safariBrowser ? (
+          <p className="text-xs text-slate-500 mb-5 text-left leading-relaxed">
+            <span className="text-slate-400">Safari:</span> finish <strong className="text-slate-300">one</strong> permission at a time — do not tap both while a dialog is open (WebKit can freeze). Use <strong className="text-slate-300">Share screen</strong>, wait until it finishes, then <strong className="text-slate-300">Allow camera</strong>, in <strong className="text-slate-300">this same tab</strong>. Fullscreen starts only after you tap{" "}
+            <strong className="text-slate-300">Start Pressure Interview</strong>. After that, stay in fullscreen until <strong className="text-slate-300">End</strong>; switching away is logged.
+          </p>
+        ) : (
+          <p className="text-xs text-slate-500 mb-5 text-left leading-relaxed">
+            Use <strong className="text-slate-300">① Share screen</strong> and <strong className="text-slate-300">② Allow camera</strong>{" "}
+            below (any order). Chrome opens the standard capture picker (entire screen, window, or tab).{" "}
+            When you tap <strong className="text-slate-300">Start Pressure Interview</strong>, we enter fullscreen — stay on this HireMind tab until you tap{" "}
+            <strong className="text-slate-300">End</strong>. Switching away is logged as a violation.
+          </p>
+        )}
 
         <div className="flex flex-col gap-3 mb-5">
           <button
             type="button"
             onClick={() => void grantScreenOnly()}
-            disabled={screenGrantBusy || Boolean(screenStream)}
+            disabled={screenGrantBusy || Boolean(screenStream) || (safariBrowser && cameraGrantBusy)}
             className="w-full font-semibold rounded-xl py-3 px-4 transition-all bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white border border-slate-600"
           >
             {screenGrantBusy
@@ -836,7 +896,7 @@ export default function PressureInterviewUI({
           <button
             type="button"
             onClick={() => void grantCameraOnly()}
-            disabled={cameraGrantBusy || Boolean(webcamStream)}
+            disabled={cameraGrantBusy || Boolean(webcamStream) || (safariBrowser && screenGrantBusy)}
             className="w-full font-semibold rounded-xl py-3 px-4 transition-all bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white border border-slate-600"
           >
             {cameraGrantBusy
