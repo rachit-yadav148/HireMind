@@ -2,7 +2,6 @@ import {
   getCreditStatus,
   addCredits,
   activateSubscription,
-  checkAndDeductCredits,
   CREDIT_COSTS,
 } from "../services/creditService.js";
 import CreditTransaction from "../models/CreditTransaction.js";
@@ -75,33 +74,6 @@ export async function subscribe(req, res) {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message || "Failed to activate subscription" });
-  }
-}
-
-/** One credit charged when Pressure mode detects the user left the interview surface (tab/desktop) — called on return. */
-export async function deductPressureTabWarning(req, res) {
-  try {
-    const sid = typeof req.body?.sessionId === "string" ? req.body.sessionId.slice(0, 96) : undefined;
-    const result = await checkAndDeductCredits(req.userId, "pressure_tab_warning", {
-      ...(sid ? { sessionId: sid } : {}),
-      description: "Pressure interview: switched away (tab / desktop / swipe)",
-    });
-    if (!result.success) {
-      return res.status(402).json({
-        code: result.reason,
-        message: result.message,
-        ...(result.creditsAvailable != null ? { creditsAvailable: result.creditsAvailable } : {}),
-      });
-    }
-    res.json({
-      success: true,
-      creditsDeducted: result.creditsDeducted,
-      remainingCredits: result.remainingCredits,
-      subscriptionType: result.subscriptionType,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: err.message || "Failed to apply warning credit deduction" });
   }
 }
 

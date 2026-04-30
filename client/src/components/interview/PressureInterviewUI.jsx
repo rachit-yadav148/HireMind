@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { Camera, Monitor, AlertTriangle, Eye } from "lucide-react";
 import RecruiterInterviewUI from "./RecruiterInterviewUI";
-import { api } from "../../services/api";
 
 /** Tab hidden ≥ this duration counts as leaving (still suppressed during Safari setup/grace periods) */
 const PAGE_HIDDEN_DEBOUNCE_MS = 600;
@@ -10,10 +9,10 @@ const PAGE_HIDDEN_DEBOUNCE_MS = 600;
 const BLUR_PENALTY_DEBOUNCE_MS = 700;
 /** While in fullscreen, poll for document.hasFocus() — catches some macOS multi-touch space switches */
 const PROCTOR_FOCUS_POLL_MS = 320;
-/** Permission sheets / first paint — must end before real proctoring (was 120s and blocked all early interview tab checks) */
-const PROCTOR_SURFACE_SUPPRESS_MS = 22_000;
-/** After mic unlock — short window only; long suppress hid real desktop/tab switches during the opening minute */
-const PROCTOR_MIC_SETTLE_SUPPRESS_MS = 12_000;
+/** Ignore tab/blur penalties while pressure UI + Safari permission flow settles */
+const PROCTOR_SURFACE_SUPPRESS_MS = 120_000;
+/** Extra window after microphone is granted — covers focus return + opening TTS */
+const PROCTOR_MIC_SETTLE_SUPPRESS_MS = 55_000;
 const CALIBRATION_FRAMES = 20;
 /** Low-pass on pose angles — dampens jitter from the tracker */
 const HEAD_POSE_SMOOTH_ALPHA = 0.22;
@@ -26,8 +25,6 @@ const HEAD_WARN_COOLDOWN_MS = 4000;
 const WARNING_DISPLAY_MS = 3000;
 const HEAD_WARN_DEDUCT_THRESHOLD = 5;
 const TAB_SWITCH_DEDUCT_THRESHOLD = 3;
-/** Prefer showing the heavier message when multiple detectors fire during one swipe. */
-const PENDING_VIOLATION_RANK = { blur: 1, fullscreen: 2, hidden: 3 };
 const SCREEN_SHARE_GRACE_SEC = 20;
 const SCREEN_SHARE_MAX_STOPS = 3;
 
@@ -40,7 +37,15 @@ const CAM_CONSTRAINTS = {
   audio: false,
 };
 
-const DISPLAY_CONSTRAINTS = { video: true, audio: false };
+const DISPLAY_CONSTRAINTS = (() => {
+  const base = { video: true, audio: false };
+  if (typeof navigator === "undefined") return base;
+  const ua = navigator.userAgent || "";
+  /** True WebKit Safari (not Chrome/Edge/Chromium) — use only well-supported keys */
+  const safariOnly = /Safari/i.test(ua) && !/(Chrome|Chromium|Edg)\//i.test(ua);
+  if (safariOnly) return base;
+  return { ...base, preferCurrentTab: true };
+})();
 
 function exitFullscreenDocument() {
   const doc = document;
@@ -78,8 +83,6 @@ export default function PressureInterviewUI({
   durationMinutes,
   onEnd,
   onReport,
-  authenticated = false,
-  refreshCredits,
 }) {
   const [webcamStream, setWebcamStream] = useState(null);
   const [webcamError, setWebcamError] = useState("");
@@ -100,8 +103,6 @@ export default function PressureInterviewUI({
   const recruiterUiRef = useRef(null);
   /** Dedupe simultaneous blur + visibility spikes (Safari shows both on permission / sheet close) */
   const lastTabPenaltyAtRef = useRef(0);
-  /** Strongest detector while user is away; applied when they land back on this surface. */
-  const pendingViolationReasonRef = useRef(null);
   const blurPenaltyTimerRef = useRef(null);
   const hiddenPenaltyTimerRef = useRef(null);
   /** Timestamp (ms): do not penalize blur/hidden tab switches until this moment */
@@ -295,14 +296,17 @@ export default function PressureInterviewUI({
    * WebKit deadlock: invoking getUserMedia and getDisplayMedia in parallel Promise.all(Settled)
    * can leave one or both promises pending forever → UI stuck on "Opening…".
    * Each capture must run from its own user gesture (Safari/Chromium-stable).
+   *
+   * IMPORTANT (Safari): do NOT enter fullscreen before the screen-share or camera dialogs.
+   * requestFullscreen pushes the browser into a separate full-screen Space; WebKit often shows
+   * the picker away from your tab so it feels like “another blank window/tab”. Fullscreen runs
+   * only from "Start Pressure Interview" after both streams are granted.
    */
   async function grantScreenOnly() {
     if (screenGrantBusy || screenStream) return;
-    requestFullscreenFromUserGesture(document.documentElement);
     setScreenGrantBusy(true);
     try {
       await requestScreenShare();
-      requestFullscreenFromUserGesture(document.documentElement);
     } finally {
       setScreenGrantBusy(false);
     }
@@ -344,8 +348,7 @@ export default function PressureInterviewUI({
   }
 
   async function handleReshareFromModal() {
-    /* Same gesture as the click: request fullscreen before await so Safari/Chrome keep immersive mode after re-sharing. */
-    requestFullscreenFromUserGesture(document.documentElement);
+    /* Do not fullscreen before picker — same Safari Space/picker separation as setup flow. */
     setReshareBusy(true);
     setScreenError("");
     try {
@@ -591,9 +594,6 @@ export default function PressureInterviewUI({
   useEffect(() => {
     if (!permissionsReady) return;
 
-    let violationSweepTimerId = null;
-    let userReturnedAfterViolationSignal = false;
-
     function clearDeferTimers() {
       clearTimeout(blurPenaltyTimerRef.current);
       clearTimeout(hiddenPenaltyTimerRef.current);
@@ -601,93 +601,21 @@ export default function PressureInterviewUI({
       hiddenPenaltyTimerRef.current = null;
     }
 
-    function clearViolationSweepTimer() {
-      if (violationSweepTimerId != null) {
-        window.clearTimeout(violationSweepTimerId);
-        violationSweepTimerId = null;
-      }
-    }
-
-    /** When user returns — warn, increment Pressure violations, optionally deduct 1 account credit */
-    async function finalizeReturnViolation(reason) {
-      clearViolationSweepTimer();
-      userReturnedAfterViolationSignal = false;
-
-      lastTabPenaltyAtRef.current = Date.now();
-      tabSwitchCountRef.current += 1;
-      setTabSwitchCount(tabSwitchCountRef.current);
-
-      let creditSuffix = "";
-      if (authenticated) {
-        try {
-          await api.post("/credits/pressure-tab-warning", { sessionId });
-          creditSuffix = " 1 warning credit deducted from your monthly usage.";
-          refreshCredits?.();
-        } catch (err) {
-          refreshCredits?.();
-          const code = err?.response?.data?.code;
-          if (code === "INSUFFICIENT_CREDITS" || code === "UNLIMITED_CAP_REACHED") {
-            creditSuffix =
-              " Warning credit could not be deducted (insufficient credits or monthly cap reached).";
-          } else {
-            creditSuffix = " Warning credit could not be deducted this time.";
-          }
-        }
-      }
-
-      showWarning(
-        reason === "hidden"
-          ? `🚫 You switched away from this HireMind interview (wrong tab or desktop). Violation recorded.${creditSuffix}`
-          : reason === "fullscreen"
-            ? `🚫 You exited fullscreen during Pressure mode. Violation recorded.${creditSuffix}`
-            : `🚫 This window lost focus (another tab, desktop, or trackpad swipe). Violation recorded.${creditSuffix}`,
-      );
-    }
-
-    function mergePendingReason(reason) {
-      const cur = pendingViolationReasonRef.current;
-      const rank = PENDING_VIOLATION_RANK;
-      if (!cur || rank[reason] >= rank[cur]) pendingViolationReasonRef.current = reason;
-    }
-
-    function markPendingViolation(reason) {
+    function applyTabPenalty(reason) {
       if (shouldSuppressProctorSignals()) return;
-      mergePendingReason(reason);
-      userReturnedAfterViolationSignal = false;
-      if (violationSweepTimerId == null) {
-        violationSweepTimerId = window.setTimeout(() => {
-          violationSweepTimerId = null;
-          tryFinalizePendingViolation({ force: true });
-        }, 4800);
-      }
-    }
-
-    function tryFinalizePendingViolation(opts = { force: false }) {
-      const pending = pendingViolationReasonRef.current;
-      if (!pending) return;
-      if (shouldSuppressProctorSignals()) return;
-      if (document.hidden || document.visibilityState !== "visible") return;
-      if (!opts.force && !userReturnedAfterViolationSignal) return;
-
       const now = Date.now();
       if (now - lastTabPenaltyAtRef.current < 2600) return;
+      lastTabPenaltyAtRef.current = now;
 
-      clearViolationSweepTimer();
-      pendingViolationReasonRef.current = null;
-      void finalizeReturnViolation(pending);
-    }
-
-    function onUserLikelyReturnedToInterviewSurface() {
-      userReturnedAfterViolationSignal = true;
-      tryFinalizePendingViolation({ force: false });
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          tryFinalizePendingViolation({ force: false });
-          setTimeout(() => tryFinalizePendingViolation({ force: false }), 120);
-          setTimeout(() => tryFinalizePendingViolation({ force: false }), 420);
-          setTimeout(() => tryFinalizePendingViolation({ force: false }), 900);
-        });
-      });
+      tabSwitchCountRef.current++;
+      setTabSwitchCount(tabSwitchCountRef.current);
+      showWarning(
+        reason === "hidden"
+          ? "🚫 Tab switching detected! Stay on this HireMind tab during Pressure mode."
+          : reason === "fullscreen"
+            ? "🚫 You left fullscreen — return to fullscreen and this tab or penalties will continue to apply."
+            : "🚫 HireMind lost window focus (another tab, desktop, or swipe). Return immediately — violation recorded toward your score.",
+      );
     }
 
     function handleVisibilityChange() {
@@ -696,17 +624,14 @@ export default function PressureInterviewUI({
         hiddenPenaltyTimerRef.current = null;
         clearTimeout(blurPenaltyTimerRef.current);
         blurPenaltyTimerRef.current = null;
-        onUserLikelyReturnedToInterviewSurface();
         return;
       }
-
-      userReturnedAfterViolationSignal = false;
 
       hiddenPenaltyTimerRef.current = setTimeout(() => {
         hiddenPenaltyTimerRef.current = null;
         if (!document.hidden) return;
         if (shouldSuppressProctorSignals()) return;
-        markPendingViolation("hidden");
+        applyTabPenalty("hidden");
       }, PAGE_HIDDEN_DEBOUNCE_MS);
     }
 
@@ -716,45 +641,34 @@ export default function PressureInterviewUI({
         blurPenaltyTimerRef.current = null;
         if (shouldSuppressProctorSignals()) return;
         if (!document.hidden && document.visibilityState === "visible" && document.hasFocus?.()) return;
-        markPendingViolation("blur");
+        applyTabPenalty("blur");
       }, BLUR_PENALTY_DEBOUNCE_MS);
     }
 
     function handleFocusOrGain() {
       clearTimeout(blurPenaltyTimerRef.current);
       blurPenaltyTimerRef.current = null;
-      onUserLikelyReturnedToInterviewSurface();
     }
 
-    function handlePageShow() {
-      onUserLikelyReturnedToInterviewSurface();
-    }
-
+    /** Warn if candidate exits fullscreen during proctoring (often means leaving focus). Ignore intentional endInterview. */
     let wasFullscreen = !!(document.fullscreenElement ?? document.webkitFullscreenElement);
     function handleFullscreenChange() {
       const nowFs = !!(document.fullscreenElement ?? document.webkitFullscreenElement);
       if (wasFullscreen && !nowFs && !ignoreScreenTrackEndRef.current && !shouldSuppressProctorSignals()) {
-        markPendingViolation("fullscreen");
-        onUserLikelyReturnedToInterviewSurface();
+        applyTabPenalty("fullscreen");
       }
       wasFullscreen = nowFs;
-      if (nowFs) onUserLikelyReturnedToInterviewSurface();
     }
 
-    /* Fullscreen not required: Spaces swipe / window defocus while still “visible” is common in Safari */
+    /** macOS: three-finger / Mission Control style switches sometimes skip blur but drop hasFocus while staying "visible". */
     const focusPollId = window.setInterval(() => {
       if (shouldSuppressProctorSignals()) return;
+      if (!(document.fullscreenElement ?? document.webkitFullscreenElement)) return;
       if (document.hidden || document.visibilityState !== "visible") return;
       if (typeof document.hasFocus !== "function" || document.hasFocus()) return;
-      markPendingViolation("blur");
+      applyTabPenalty("blur");
     }, PROCTOR_FOCUS_POLL_MS);
 
-    function handleFocusInCapture() {
-      onUserLikelyReturnedToInterviewSurface();
-    }
-
-    window.addEventListener("pageshow", handlePageShow);
-    document.addEventListener("focusin", handleFocusInCapture, true);
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -763,11 +677,7 @@ export default function PressureInterviewUI({
     document.addEventListener("pointerdown", handleFocusOrGain, true);
 
     return () => {
-      clearViolationSweepTimer();
-      pendingViolationReasonRef.current = null;
       window.clearInterval(focusPollId);
-      window.removeEventListener("pageshow", handlePageShow);
-      document.removeEventListener("focusin", handleFocusInCapture, true);
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -777,7 +687,7 @@ export default function PressureInterviewUI({
       clearDeferTimers();
       exitFullscreenDocument();
     };
-  }, [authenticated, refreshCredits, sessionId, permissionsReady, showWarning]);
+  }, [permissionsReady, showWarning]);
 
   // ─── Cleanup streams on unmount ───
   const webcamStreamCleanupRef = useRef(null);
@@ -904,8 +814,10 @@ export default function PressureInterviewUI({
         {screenError && <p className="text-sm text-red-400 mb-3">{screenError}</p>}
 
         <p className="text-xs text-slate-500 mb-5 text-left leading-relaxed">
-          <span className="text-slate-400">Safari-friendly setup:</span> use the two buttons below (any order).
-          When you tap <strong className="text-slate-300">Start Pressure Interview</strong>, we request fullscreen — stay on this HireMind tab in front until you tap <strong className="text-slate-300">End</strong>. Switching away is logged as a violation.
+          <span className="text-slate-400">Safari:</span> use <strong className="text-slate-300">Share screen</strong> and{" "}
+          <strong className="text-slate-300">Allow camera</strong> here in <strong className="text-slate-300">this same tab</strong> (we wait until you tap{" "}
+          <strong className="text-slate-300">Start Pressure Interview</strong> before fullscreen so system prompts are not split across a blank Safari window).{" "}
+          After the interview starts, stay in fullscreen on this tab until you tap <strong className="text-slate-300">End</strong> — switching away is logged.
         </p>
 
         <div className="flex flex-col gap-3 mb-5">

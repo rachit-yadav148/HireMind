@@ -13,15 +13,7 @@ const creditTransactionSchema = new mongoose.Schema(
     balanceAfter: { type: Number, required: true },
     feature: {
       type: String,
-      enum: [
-        "resume_analysis",
-        "ai_interview",
-        "question_generator",
-        "pressure_tab_warning",
-        "purchase",
-        "bonus",
-        "refund",
-      ],
+      enum: ["resume_analysis", "ai_interview", "question_generator", "purchase", "bonus", "refund"],
       required: true,
     },
     metadata: {

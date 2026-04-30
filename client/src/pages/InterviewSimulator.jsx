@@ -866,8 +866,6 @@ export default function InterviewSimulator() {
               initialAiMessage={conversationalSession.aiMessage}
               candidateName={conversationalSession.candidateName}
               durationMinutes={durationMinutes}
-              authenticated={isAuthenticated}
-              refreshCredits={refreshCredits}
               onEnd={() => {}}
               onReport={(r) => {
                 setSessionId(conversationalSession.sessionId);
