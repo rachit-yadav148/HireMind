@@ -5,6 +5,8 @@ const CREDIT_COSTS = {
   resume_analysis: 3,
   ai_interview: 10,
   question_generator: 3,
+  /** Charged when user returns after leaving the Pressure interview surface (tab / desktop / swipe). */
+  pressure_tab_warning: 1,
 };
 
 const UNLIMITED_MONTHLY_CAP = 2000;
@@ -22,7 +24,7 @@ export async function ensureUserCredit(userId) {
   return userCredit;
 }
 
-export async function checkAndDeductCredits(userId, feature) {
+export async function checkAndDeductCredits(userId, feature, extraTxnMetadata = {}) {
   const cost = CREDIT_COSTS[feature];
   if (!cost) {
     throw new Error(`Invalid feature: ${feature}`);
@@ -66,6 +68,7 @@ export async function checkAndDeductCredits(userId, feature) {
       metadata: {
         subscriptionType: "unlimited_monthly",
         description: `Unlimited plan usage: ${feature}`,
+        ...extraTxnMetadata,
       },
     });
 
@@ -103,6 +106,7 @@ export async function checkAndDeductCredits(userId, feature) {
     metadata: {
       subscriptionType: userCredit.subscriptionType,
       description: `Used ${cost} credits for ${feature}`,
+      ...extraTxnMetadata,
     },
   });
 
