@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/AuthContext";
 import { getApiErrorMessage } from "../services/api";
 import { Eye, EyeOff } from "../components/Icons";
+import BrandLogo, { BrandWordmarkText } from "../components/BrandLogo";
 
 const OTP_RESEND_COOLDOWN_SECONDS = Math.max(
   10,
@@ -295,8 +296,9 @@ export default function Register() {
         <div className="relative z-10 flex flex-col h-full p-10 xl:p-14">
           {/* Logo */}
           <motion.div initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
-            <Link to="/" className="font-display font-bold text-2xl text-white">
-              Hire<span className="bg-gradient-to-r from-cyan-300 via-brand-400 to-fuchsia-400 bg-clip-text text-transparent">Mind</span>
+            <Link to="/" className="inline-flex items-center gap-1" aria-label="HireMind home">
+              <BrandLogo className="h-12 w-12 shrink-0" alt="" />
+              <BrandWordmarkText className="font-display font-bold text-2xl text-white" />
             </Link>
           </motion.div>
 
@@ -363,8 +365,9 @@ export default function Register() {
         >
           {/* Mobile logo */}
           <div className="lg:hidden mb-7 text-center">
-            <Link to="/" className="font-display font-bold text-2xl text-white inline-block">
-              Hire<span className="bg-gradient-to-r from-cyan-300 via-brand-400 to-fuchsia-400 bg-clip-text text-transparent">Mind</span>
+            <Link to="/" className="inline-flex items-center justify-center gap-1" aria-label="HireMind home">
+              <BrandLogo className="h-12 w-12 shrink-0" alt="" />
+              <BrandWordmarkText className="font-display font-bold text-2xl text-white inline-block" />
             </Link>
           </div>
 

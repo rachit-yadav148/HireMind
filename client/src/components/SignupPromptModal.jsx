@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import posthog from "../posthog";
+import BrandLogo from "./BrandLogo";
 
 const VARIANT_B_COPY = {
   resume_analysis: {
@@ -54,6 +55,7 @@ export default function SignupPromptModal({ open, onClose, feature }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-950/75" onClick={handleDismiss} aria-hidden="true" />
       <div className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-card">
+        <BrandLogo className="h-11 w-11 mb-4" alt="" />
         <h3 className="font-display text-xl font-semibold text-white">{copy.title}</h3>
         <p className="mt-2 text-sm text-slate-300">{copy.description}</p>
         <div className="mt-5 flex flex-wrap gap-3">

@@ -5,6 +5,7 @@ import {
   trackAiInterviewTryFreeClicked,
   trackResumeAnalysisTryFreeClicked,
 } from "../utils/tryFreeAnalytics";
+import BrandLogo, { BrandWordmarkText } from "../components/BrandLogo";
 
 /* ─── Animation variants ─────────────────────────────────────────────────── */
 const fadeUp = {
@@ -641,12 +642,13 @@ export default function Landing() {
         className="sticky top-0 z-50 border-b border-white/5 bg-surface-900/85 backdrop-blur-md"
       >
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3">
-          <motion.span
+          <motion.div
             whileHover={{ scale: 1.04 }}
-            className="font-display font-bold text-xl text-white cursor-default select-none shrink-0"
+            className="inline-flex items-center gap-0.5 cursor-default select-none shrink-0"
           >
-            Hire<span className="bg-gradient-to-r from-cyan-300 via-brand-400 to-fuchsia-400 bg-clip-text text-transparent">Mind</span>
-          </motion.span>
+            <BrandLogo className="h-11 w-11 shrink-0" alt="" />
+            <BrandWordmarkText className="font-display font-bold text-xl text-white tracking-tight" />
+          </motion.div>
 
           <div className="flex items-center gap-2">
             <Link
@@ -696,8 +698,12 @@ export default function Landing() {
                   className="absolute -bottom-1 left-0 right-0 h-px bg-gradient-to-r from-cyan-400/0 via-cyan-400/80 to-cyan-400/0 origin-left"
                 />
               </span>
-              <br />With{" "}
-              <span className="bg-gradient-to-r from-cyan-300 via-brand-400 to-fuchsia-400 bg-clip-text text-transparent">HireMind</span>{" "}AI
+              <br />
+              <span className="inline-flex flex-wrap items-baseline gap-x-1 md:gap-x-1.5 gap-y-0">
+                <span className="text-white font-bold">With</span>
+                <BrandWordmarkText className="font-display font-bold text-[inherit] tracking-tight" />
+                <span className="text-white font-bold">AI</span>
+              </span>
             </motion.h1>
 
             <motion.p variants={fadeUp} className="mt-5 text-base sm:text-lg text-slate-400 leading-relaxed max-w-xl">
@@ -911,8 +917,9 @@ export default function Landing() {
       {/* ── Footer ──────────────────────────────────────────── */}
       <footer className="border-t border-white/5 bg-surface-900/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
-          <span className="font-display font-bold text-lg text-white select-none">
-            Hire<span className="bg-gradient-to-r from-cyan-300 via-brand-400 to-fuchsia-400 bg-clip-text text-transparent">Mind</span>
+          <span className="inline-flex items-center gap-0.5 select-none">
+            <BrandLogo className="h-11 w-11 shrink-0" alt="" />
+            <BrandWordmarkText className="font-display font-bold text-lg text-white tracking-tight" />
           </span>
           <div className="flex items-center gap-5 text-sm text-slate-500 flex-wrap justify-center">
             <Link to="/resume" className="hover:text-slate-300 transition-colors py-1">Resume Analyzer</Link>

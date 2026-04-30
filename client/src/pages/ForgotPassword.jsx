@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, getApiErrorMessage } from "../services/api";
+import BrandLogo from "../components/BrandLogo";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -33,6 +34,9 @@ export default function ForgotPassword() {
 
       <div className="w-full max-w-md rounded-2xl border border-slate-700/80 bg-slate-900/65 backdrop-blur-md p-8 shadow-card">
         <div className="text-center mb-8">
+          <Link to="/" className="inline-block mx-auto mb-5" aria-label="HireMind home">
+            <BrandLogo className="h-12 w-12 mx-auto" alt="" />
+          </Link>
           <h1 className="font-display font-bold text-2xl text-white">Forgot password</h1>
           <p className="text-slate-400 text-sm mt-2">Enter your email to receive reset instructions.</p>
         </div>

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/AuthContext";
 import Sidebar from "./Sidebar";
 import CreditDisplay from "./CreditDisplay";
+import BrandLogo, { BrandWordmarkText } from "./BrandLogo";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -38,8 +39,13 @@ export default function Layout() {
           style={{ background: "rgba(8,14,26,0.85)" }}
         >
           <div className="flex items-center justify-between gap-3">
-            <Link to="/dashboard" className="font-display font-bold text-lg text-white tracking-tight">
-              Hire<span className="bg-gradient-to-r from-cyan-300 to-fuchsia-400 bg-clip-text text-transparent">Mind</span>
+            <Link
+              to="/dashboard"
+              className="inline-flex items-center gap-1"
+              aria-label="HireMind — Dashboard"
+            >
+              <BrandLogo className="h-11 w-11 shrink-0" alt="" />
+              <BrandWordmarkText className="font-display font-bold text-lg text-white tracking-tight" />
             </Link>
             <div className="flex items-center gap-2.5">
               <CreditDisplay />

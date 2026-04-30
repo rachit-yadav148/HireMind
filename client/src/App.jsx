@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
+import BrandLogo from "./components/BrandLogo";
 import posthog from "./posthog";
 
 /* ── Lazy-loaded pages ──────────────────────────────────────────────────── */
@@ -28,11 +29,7 @@ function PageLoader() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#020617]">
       <div className="flex flex-col items-center gap-4">
-        {/* Animated logo mark */}
-        <div className="relative w-10 h-10">
-          <div className="absolute inset-0 rounded-full border-2 border-brand-500/30" />
-          <div className="absolute inset-0 rounded-full border-2 border-t-brand-400 border-r-fuchsia-400 border-b-transparent border-l-transparent animate-spin" />
-        </div>
+        <BrandLogo className="h-14 w-14" alt="" />
         <p className="text-xs text-slate-600 font-medium tracking-widest uppercase">HireMind</p>
       </div>
     </div>

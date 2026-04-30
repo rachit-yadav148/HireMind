@@ -12,6 +12,7 @@ import {
 } from "./Icons";
 import { CreditCard } from "lucide-react";
 import CreditDisplay from "./CreditDisplay";
+import BrandLogo, { BrandWordmarkText } from "./BrandLogo";
 
 const links = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -59,14 +60,11 @@ export default function Sidebar({ onLogout, userName, mobileMenuOpen, onCloseMob
           <Link
             to="/dashboard"
             onClick={onCloseMobileMenu}
-            className="inline-block group"
+            className="inline-flex items-center gap-1 group"
+            aria-label="HireMind — Dashboard"
           >
-            <span className="font-display font-bold text-xl text-white tracking-tight">
-              Hire
-              <span className="bg-gradient-to-r from-cyan-300 via-brand-400 to-fuchsia-400 bg-clip-text text-transparent">
-                Mind
-              </span>
-            </span>
+            <BrandLogo className="h-11 w-11 shrink-0" alt="" />
+            <BrandWordmarkText className="font-display font-bold text-xl text-white tracking-tight" />
           </Link>
 
           {/* User info */}

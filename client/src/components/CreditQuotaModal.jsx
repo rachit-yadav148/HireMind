@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { X, Zap, CreditCard, TrendingUp, Loader2 } from "lucide-react";
+import { X, CreditCard, TrendingUp, Loader2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useCredits } from "../context/CreditContext";
 import { api } from "../services/api";
 import { openRazorpayCheckout } from "../utils/razorpay";
 import posthog from "../posthog";
+import BrandLogo from "./BrandLogo";
 
 const PLANS = [
   {
@@ -118,8 +119,8 @@ export default function CreditQuotaModal({ isOpen, onClose, reason = "INSUFFICIE
 
         <div className="p-8">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-brand-500 to-fuchsia-500 mb-4">
-              <Zap className="w-8 h-8 text-white" />
+            <div className="inline-flex items-center justify-center mb-4">
+              <BrandLogo className="h-16 w-16" alt="" />
             </div>
             <h2 className="text-3xl font-bold text-white mb-2">{message.title}</h2>
             <p className="text-slate-400 max-w-2xl mx-auto">{message.description}</p>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "../services/api";
+import BrandLogo from "../components/BrandLogo";
 
 function useQuery() {
   const { search } = useLocation();
@@ -61,6 +62,9 @@ export default function ResetPassword() {
 
       <div className="w-full max-w-md rounded-2xl border border-slate-700/80 bg-slate-900/65 backdrop-blur-md p-8 shadow-card">
         <div className="text-center mb-8">
+          <Link to="/" className="inline-block mx-auto mb-5" aria-label="HireMind home">
+            <BrandLogo className="h-12 w-12 mx-auto" alt="" />
+          </Link>
           <h1 className="font-display font-bold text-2xl text-white">Reset password</h1>
           <p className="text-slate-400 text-sm mt-2">Set a new password for your account.</p>
         </div>
