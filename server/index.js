@@ -16,6 +16,7 @@ import feedbackRoutes from "./routes/feedbackRoutes.js";
 import trialRoutes from "./routes/trialRoutes.js";
 import creditRoutes from "./routes/creditRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import { fetchApproximateEgressInfo } from "./utils/egressInfo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -97,6 +98,39 @@ app.use("/api/credits", creditRoutes);
 app.use("/api/payments", paymentRoutes);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, name: "HireMind API" }));
+
+/** Debug where outbound requests originate from (helps explain Gemini geo blocks on Render etc.). Do NOT expose publicly without HEALTH_NETWORK_SECRET. */
+app.get("/api/health/network", async (req, res) => {
+  const wantSecret = process.env.HEALTH_NETWORK_SECRET?.trim();
+  if (!wantSecret) {
+    return res.status(503).json({
+      ok: false,
+      enabled: false,
+      message: "Set HEALTH_NETWORK_SECRET on the server, then retry with Authorization: Bearer <secret> or ?secret=",
+    });
+  }
+  const bearer = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  const q = String(req.query.secret || "").trim();
+  if (bearer !== wantSecret && q !== wantSecret) {
+    return res.status(403).json({ ok: false, message: "Forbidden" });
+  }
+  try {
+    const egress = await fetchApproximateEgressInfo({ timeoutMs: 6000 });
+    res.json({
+      ok: Boolean(egress?.ip),
+      egressApprox: egress || null,
+      aiEnv: {
+        geminiKeyPresent: Boolean(process.env.GEMINI_API_KEY?.trim()),
+        openaiFallbackPresent: Boolean(process.env.OPENAI_API_KEY?.trim()),
+        geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+        openaiModel: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      },
+      hint: "If Gemini returns User location / FAILED_PRECONDITION, add OPENAI_API_KEY on Render and redeploy, or switch hosting egress (region/provider).",
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, message: String(e?.message || e) });
+  }
+});
 
 // #region agent log endpoint
 app.post("/api/debug-log-244377", (req, res) => {

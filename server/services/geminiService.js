@@ -8,6 +8,7 @@
 
 import { GoogleGenAI, createUserContent, createPartFromText, createPartFromBase64 } from "@google/genai";
 import OpenAI from "openai";
+import { fetchApproximateEgressInfo } from "../utils/egressInfo.js";
 
 /** Default matches current Gemini docs; override with GEMINI_MODEL in .env */
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -47,8 +48,32 @@ function isGeminiRegionBlockedError(err) {
   );
 }
 
-const GEMINI_REGION_NO_FALLBACK_MSG =
-  "The Gemini API is not available for this server's region. Add OPENAI_API_KEY to server/.env to use the OpenAI fallback, or run the API from a region where Gemini is supported (see Google AI documentation).";
+/**
+ * Shown to API clients (avoid server paths and internal keys in the JSON body).
+ * Developer instructions are logged server-side only.
+ */
+const USER_MSG_AI_UNAVAILABLE =
+  "This feature is temporarily unavailable. Please try again in a few minutes.";
+
+function logGeminiRegionBlockedNoOpenAI() {
+  console.error(
+    "[AI] Gemini rejected this outbound request (often: Google does not classify your host's egress IP like a consumer in an allowed territory). OPENAI_API_KEY is not set, so there's no fallback. " +
+      "Fix: add OPENAI_API_KEY in Render → Environment → your web service → redeploy. " +
+      "Docs: https://ai.google.dev/gemini-api/docs/available_regions"
+  );
+  void (async () => {
+    const info = await fetchApproximateEgressInfo();
+    if (info?.ip) {
+      console.error(
+        `[AI] Outbound egress (ipinfo.io, approximate): ip=${info.ip} country=${info.country ?? "?"} region=${info.region ?? "?"} city=${info.city ?? "?"} org=${info.org ?? "?"}`
+      );
+    } else {
+      console.error(
+        "[AI] Could not look up egress IP (timeout/firewall). Set HEALTH_NETWORK_SECRET on the server and call GET /api/health/network — see server/.env.example."
+      );
+    }
+  })();
+}
 
 /**
  * @param {string} prompt
@@ -129,7 +154,8 @@ async function generateContent(prompt, options = {}) {
     return await generateContentWithGemini(prompt, options);
   } catch (err) {
     if (isGeminiRegionBlockedError(err) && !getOpenAI()) {
-      throw new Error(GEMINI_REGION_NO_FALLBACK_MSG);
+      logGeminiRegionBlockedNoOpenAI();
+      throw new Error(USER_MSG_AI_UNAVAILABLE);
     }
     if (!isGeminiRegionBlockedError(err) || !getOpenAI()) {
       throw err;
@@ -351,7 +377,8 @@ export async function extractTextFromImageDocument(buffer, mimeType) {
       }
     }
     if (isGeminiRegionBlockedError(geminiErr) && !getOpenAI()) {
-      throw new Error(GEMINI_REGION_NO_FALLBACK_MSG);
+      logGeminiRegionBlockedNoOpenAI();
+      throw new Error(USER_MSG_AI_UNAVAILABLE);
     }
     throw geminiErr;
   }
@@ -397,7 +424,8 @@ export async function extractTextFromPdfDocument(buffer) {
       }
     }
     if (isGeminiRegionBlockedError(geminiErr) && !getOpenAI()) {
-      throw new Error(GEMINI_REGION_NO_FALLBACK_MSG);
+      logGeminiRegionBlockedNoOpenAI();
+      throw new Error(USER_MSG_AI_UNAVAILABLE);
     }
     throw geminiErr;
   }
