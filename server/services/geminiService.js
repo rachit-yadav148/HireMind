@@ -1,13 +1,19 @@
 /**
  * Google Gemini via official @google/genai SDK (see Gemini API quickstart).
  * Set GEMINI_API_KEY in server/.env — the SDK reads it automatically if you use new GoogleGenAI({}).
+ * When Gemini is unavailable in the server's region (FAILED_PRECONDITION / "User location is not supported"),
+ * set OPENAI_API_KEY (optional) to use OpenAI as a fallback for text and document OCR.
  * https://ai.google.dev/gemini-api/docs/quickstart
  */
 
 import { GoogleGenAI, createUserContent, createPartFromText, createPartFromBase64 } from "@google/genai";
+import OpenAI from "openai";
 
 /** Default matches current Gemini docs; override with GEMINI_MODEL in .env */
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+/** Used when Gemini blocks the region (e.g. FAILED_PRECONDITION / "User location is not supported"). */
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 let _client = null;
 
@@ -23,11 +29,32 @@ function getClient() {
   return _client;
 }
 
+let _openai = null;
+
+function getOpenAI() {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) return null;
+  if (!_openai) _openai = new OpenAI({ apiKey: key });
+  return _openai;
+}
+
+/** Gemini API returns 400 when the request origin/region is not allowed for the AI Studio key. */
+function isGeminiRegionBlockedError(err) {
+  const m = String(err?.message || err || "");
+  return (
+    /User location is not supported|not supported for the API use/i.test(m) ||
+    (/\bFAILED_PRECONDITION\b/.test(m) && /location|region|GEO|blocked country/i.test(m))
+  );
+}
+
+const GEMINI_REGION_NO_FALLBACK_MSG =
+  "The Gemini API is not available for this server's region. Add OPENAI_API_KEY to server/.env to use the OpenAI fallback, or run the API from a region where Gemini is supported (see Google AI documentation).";
+
 /**
  * @param {string} prompt
  * @param {{ temperature?: number, maxOutputTokens?: number, responseMimeType?: string }} options
  */
-async function generateContent(prompt, options = {}) {
+async function generateContentWithGemini(prompt, options = {}) {
   const ai = getClient();
   const config = {
     temperature: options.temperature ?? 0.7,
@@ -63,6 +90,62 @@ async function generateContent(prompt, options = {}) {
     );
   }
   return text;
+}
+
+/**
+ * @param {string} prompt
+ * @param {{ temperature?: number, maxOutputTokens?: number, responseMimeType?: string }} options
+ */
+async function generateContentWithOpenAI(prompt, options = {}) {
+  const client = getOpenAI();
+  if (!client) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. Add it to server/.env for regions where the Gemini API is unavailable."
+    );
+  }
+  const temperature = options.temperature ?? 0.7;
+  const maxTokens = Math.min(options.maxOutputTokens ?? 8192, 16384);
+  const wantsJson = options.responseMimeType === "application/json";
+  const completion = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    temperature,
+    max_tokens: maxTokens,
+    ...(wantsJson ? { response_format: { type: "json_object" } } : {}),
+    messages: [{ role: "user", content: prompt }],
+  });
+  const text = (completion.choices[0]?.message?.content ?? "").trim();
+  if (!text) {
+    throw new Error("OpenAI returned no text. Check OPENAI_API_KEY, quotas, and OPENAI_MODEL.");
+  }
+  return text;
+}
+
+/**
+ * @param {string} prompt
+ * @param {{ temperature?: number, maxOutputTokens?: number, responseMimeType?: string }} options
+ */
+async function generateContent(prompt, options = {}) {
+  try {
+    return await generateContentWithGemini(prompt, options);
+  } catch (err) {
+    if (isGeminiRegionBlockedError(err) && !getOpenAI()) {
+      throw new Error(GEMINI_REGION_NO_FALLBACK_MSG);
+    }
+    if (!isGeminiRegionBlockedError(err) || !getOpenAI()) {
+      throw err;
+    }
+    console.warn(
+      "[generateContent] Gemini unavailable in this region; using OpenAI fallback (set OPENAI_API_KEY)."
+    );
+    try {
+      return await generateContentWithOpenAI(prompt, options);
+    } catch (fallbackErr) {
+      const msg = fallbackErr?.message || String(fallbackErr);
+      throw new Error(
+        `AI fallback failed after Gemini region block: ${msg}. Original: ${err?.message || err}`
+      );
+    }
+  }
 }
 
 function extractJson(text) {
@@ -199,45 +282,125 @@ function filterMissingSkillsGroundedInJd(skills, jdText) {
 }
 
 /**
+ * OCR-style extraction via OpenAI vision (used when Gemini is region-blocked).
+ * @param {string} base64
+ * @param {string} mimeType
+ * @param {string} instruction
+ */
+async function extractTextWithOpenAIVision(base64, mimeType, instruction) {
+  const client = getOpenAI();
+  if (!client) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. Add it to server/.env for regions where the Gemini API is unavailable."
+    );
+  }
+  const dataUrl = `data:${mimeType};base64,${base64}`;
+  const completion = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    max_tokens: 8192,
+    temperature: 0.2,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: instruction },
+          { type: "image_url", image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+  });
+  return (completion.choices[0]?.message?.content ?? "").trim();
+}
+
+/**
  * Extract readable text from an uploaded image document (JPEG/PNG/WebP/GIF).
  * @param {Buffer} buffer
  * @param {string} mimeType
  */
 export async function extractTextFromImageDocument(buffer, mimeType) {
-  const ai = getClient();
   const base64 = buffer.toString("base64");
-  const contents = createUserContent([
-    createPartFromText(
-      "Extract all readable text from this uploaded document image. Output plain text only. If unreadable, say NO_TEXT_EXTRACTED."
-    ),
-    createPartFromBase64(base64, mimeType),
-  ]);
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents,
-    config: { temperature: 0.2, maxOutputTokens: 8192 },
-  });
-  return (response?.text ?? "").trim();
+  const instruction =
+    "Extract all readable text from this uploaded document image. Output plain text only. If unreadable, say NO_TEXT_EXTRACTED.";
+
+  try {
+    const ai = getClient();
+    const contents = createUserContent([
+      createPartFromText(instruction),
+      createPartFromBase64(base64, mimeType),
+    ]);
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents,
+      config: { temperature: 0.2, maxOutputTokens: 8192 },
+    });
+    return (response?.text ?? "").trim();
+  } catch (err) {
+    const msg = err?.message || err?.toString?.() || "Unknown error";
+    const geminiErr = new Error(`Gemini API error: ${msg}`);
+    if (isGeminiRegionBlockedError(geminiErr) && getOpenAI()) {
+      console.warn(
+        "[extractTextFromImageDocument] Gemini unavailable in this region; using OpenAI vision fallback."
+      );
+      try {
+        return await extractTextWithOpenAIVision(base64, mimeType, instruction);
+      } catch (fallbackErr) {
+        const f = fallbackErr?.message || String(fallbackErr);
+        throw new Error(
+          `AI vision fallback failed after Gemini region block: ${f}. Original: ${msg}`
+        );
+      }
+    }
+    if (isGeminiRegionBlockedError(geminiErr) && !getOpenAI()) {
+      throw new Error(GEMINI_REGION_NO_FALLBACK_MSG);
+    }
+    throw geminiErr;
+  }
 }
 
 /** When pdf-parse returns nothing (scanned PDFs), Gemini can still read the document. */
 export async function extractTextFromPdfDocument(buffer) {
-  const ai = getClient();
   const base64 = buffer.toString("base64");
-  const contents = createUserContent([
-    createPartFromText(
-      "Extract every readable word from this PDF (job posting, job description, or similar). Preserve section headings and bullet lists. Output plain UTF-8 text only — no preamble or markdown. If the file has no readable text, output exactly: NO_TEXT_EXTRACTED"
-    ),
-    createPartFromBase64(base64, "application/pdf"),
-  ]);
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents,
-    config: { temperature: 0.1, maxOutputTokens: 8192 },
-  });
-  const raw = (response?.text ?? "").trim();
-  if (!raw || /^NO_TEXT_EXTRACTED\.?$/i.test(raw)) return "";
-  return raw;
+  const instruction =
+    "Extract every readable word from this PDF (job posting, job description, or similar). Preserve section headings and bullet lists. Output plain UTF-8 text only — no preamble or markdown. If the file has no readable text, output exactly: NO_TEXT_EXTRACTED";
+
+  try {
+    const ai = getClient();
+    const contents = createUserContent([
+      createPartFromText(instruction),
+      createPartFromBase64(base64, "application/pdf"),
+    ]);
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents,
+      config: { temperature: 0.1, maxOutputTokens: 8192 },
+    });
+    const raw = (response?.text ?? "").trim();
+    if (!raw || /^NO_TEXT_EXTRACTED\.?$/i.test(raw)) return "";
+    return raw;
+  } catch (err) {
+    const msg = err?.message || err?.toString?.() || "Unknown error";
+    const geminiErr = new Error(`Gemini API error: ${msg}`);
+    if (isGeminiRegionBlockedError(geminiErr) && getOpenAI()) {
+      console.warn(
+        "[extractTextFromPdfDocument] Gemini unavailable in this region; trying OpenAI vision fallback."
+      );
+      try {
+        const ocr = await extractTextWithOpenAIVision(base64, "application/pdf", instruction);
+        if (!ocr || /^NO_TEXT_EXTRACTED\.?$/i.test(ocr)) return "";
+        return ocr;
+      } catch (visionErr) {
+        console.warn(
+          "[extractTextFromPdfDocument] OpenAI PDF vision failed:",
+          visionErr?.message || visionErr
+        );
+        return "";
+      }
+    }
+    if (isGeminiRegionBlockedError(geminiErr) && !getOpenAI()) {
+      throw new Error(GEMINI_REGION_NO_FALLBACK_MSG);
+    }
+    throw geminiErr;
+  }
 }
 
 /** Backward-compatible alias used in existing controllers */
