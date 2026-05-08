@@ -1336,13 +1336,27 @@ export default function InterviewSimulator() {
         </motion.div>
       )}
 
-      <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} feature="ai_interview" />
-      <CreditQuotaModal
-        isOpen={showCreditModal}
-        onClose={() => setShowCreditModal(false)}
-        reason={creditError?.code}
-        creditsNeeded={creditError?.creditsNeeded || 0}
-      />
+      <AnimatePresence mode="wait">
+        {showSignupPrompt && (
+          <SignupPromptModal
+            key="signup-modal"
+            open={showSignupPrompt}
+            onClose={() => setShowSignupPrompt(false)}
+            feature="ai_interview"
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence mode="wait">
+        {showCreditModal && (
+          <CreditQuotaModal
+            key="credit-modal"
+            isOpen={showCreditModal}
+            onClose={() => setShowCreditModal(false)}
+            reason={creditError?.code}
+            creditsNeeded={creditError?.creditsNeeded || 0}
+          />
+        )}
+      </AnimatePresence>
       </div>
     </div>
   );

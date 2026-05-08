@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/AuthContext";
+/* framer-motion removed from Layout to prevent stuck animations on mobile */
 import Sidebar from "./Sidebar";
 import CreditDisplay from "./CreditDisplay";
 import BrandLogo, { BrandWordmarkText } from "./BrandLogo";
@@ -49,34 +49,23 @@ export default function Layout() {
             </Link>
             <div className="flex items-center gap-2.5">
               <CreditDisplay />
-              <motion.button
+              <button
                 type="button"
                 onClick={() => setMobileMenuOpen((v) => !v)}
-                whileTap={{ scale: 0.93 }}
                 aria-label="Toggle menu"
                 aria-expanded={mobileMenuOpen}
-                className="rounded-xl border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-slate-300 backdrop-blur-sm"
+                className="rounded-xl border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-slate-300 active:scale-95 transition-transform"
               >
                 {mobileMenuOpen ? "Close" : "Menu"}
-              </motion.button>
+              </button>
             </div>
           </div>
         </header>
 
-        {/* Page content with animated transitions */}
+        {/* Page content */}
         <main className="flex-1 overflow-x-hidden">
           <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-10">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={location.pathname}
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <Outlet />
-              </motion.div>
-            </AnimatePresence>
+            <Outlet />
           </div>
         </main>
       </div>

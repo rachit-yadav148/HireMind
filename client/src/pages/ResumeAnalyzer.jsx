@@ -632,8 +632,26 @@ export default function ResumeAnalyzer() {
           )}
         </AnimatePresence>
 
-        <SignupPromptModal open={showSignupPrompt} onClose={() => setShowSignupPrompt(false)} feature="resume_analysis" />
-        <CreditQuotaModalWrapper show={showCreditModal} onClose={() => setShowCreditModal(false)} error={creditError} />
+        <AnimatePresence mode="wait">
+          {showSignupPrompt && (
+            <SignupPromptModal
+              key="signup-modal"
+              open={showSignupPrompt}
+              onClose={() => setShowSignupPrompt(false)}
+              feature="resume_analysis"
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence mode="wait">
+          {showCreditModal && (
+            <CreditQuotaModalWrapper
+              key="credit-modal"
+              show={showCreditModal}
+              onClose={() => setShowCreditModal(false)}
+              error={creditError}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

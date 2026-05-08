@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
 import posthog from "../posthog";
 import BrandLogo from "./BrandLogo";
 
@@ -53,8 +54,22 @@ export default function SignupPromptModal({ open, onClose, feature }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-950/75" onClick={handleDismiss} aria-hidden="true" />
-      <div className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-card">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        className="absolute inset-0 bg-slate-950/75"
+        onClick={handleDismiss}
+        aria-hidden="true"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.2 }}
+        className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-card"
+      >
         <BrandLogo className="h-11 w-11 mb-4" alt="" />
         <h3 className="font-display text-xl font-semibold text-white">{copy.title}</h3>
         <p className="mt-2 text-sm text-slate-300">{copy.description}</p>
@@ -74,7 +89,7 @@ export default function SignupPromptModal({ open, onClose, feature }) {
             Maybe later
           </button>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

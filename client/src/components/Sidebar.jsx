@@ -1,5 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   LayoutDashboard,
   FileSearch,
@@ -28,21 +28,15 @@ const links = [
 export default function Sidebar({ onLogout, userName, mobileMenuOpen, onCloseMobileMenu }) {
   return (
     <>
-      {/* Mobile backdrop */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <motion.button
-            type="button"
-            aria-label="Close menu"
-            onClick={onCloseMobileMenu}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
-          />
-        )}
-      </AnimatePresence>
+      {/* Mobile backdrop — no exit animation to prevent stuck overlays */}
+      {mobileMenuOpen && (
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={onCloseMobileMenu}
+          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+        />
+      )}
 
       <aside
         className={`w-64 shrink-0 h-[100dvh] md:min-h-screen flex flex-col fixed inset-y-0 left-0 z-40 transform transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] md:static md:z-auto md:translate-x-0 border-r border-white/5 ${

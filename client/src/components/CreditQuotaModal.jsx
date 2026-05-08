@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { X, CreditCard, TrendingUp, Loader2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useCredits } from "../context/CreditContext";
@@ -107,8 +108,23 @@ export default function CreditQuotaModal({ isOpen, onClose, reason = "INSUFFICIE
   const message = getMessage();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.2 }}
+        className="relative w-full max-w-5xl max-h-[90vh] overflow-y-auto bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl z-10"
+      >
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-2 rounded-lg hover:bg-slate-800 transition-colors"
@@ -196,7 +212,7 @@ export default function CreditQuotaModal({ isOpen, onClose, reason = "INSUFFICIE
             </p>
           </div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
