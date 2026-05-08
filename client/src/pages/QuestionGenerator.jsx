@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../services/api";
 import posthog from "../posthog";
@@ -32,6 +32,13 @@ export default function QuestionGenerator() {
   const [activeTab, setActiveTab] = useState("technical");
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [creditError, setCreditError] = useState(null);
+
+  // Cleanup: close modal when navigating away
+  useEffect(() => {
+    return () => {
+      setShowCreditModal(false);
+    };
+  }, []);
 
   async function handleGenerate(e) {
     e.preventDefault();

@@ -162,6 +162,14 @@ export default function InterviewSimulator() {
   const [creditError, setCreditError] = useState(null);
   const [interviewMode, setInterviewMode] = useState("practice");
   const [conversationalSession, setConversationalSession] = useState(null);
+
+  // Cleanup: close all modals when navigating away
+  useEffect(() => {
+    return () => {
+      setShowSignupPrompt(false);
+      setShowCreditModal(false);
+    };
+  }, []);
   const [animatedMainScore, setAnimatedMainScore] = useState(0);
 
   useEffect(() => {

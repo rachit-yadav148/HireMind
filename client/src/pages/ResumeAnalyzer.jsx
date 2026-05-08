@@ -54,6 +54,14 @@ export default function ResumeAnalyzer() {
   const [creditError, setCreditError] = useState(null);
   const [displayScore, setDisplayScore] = useState(0);
 
+  // Cleanup: close all modals when navigating away
+  useEffect(() => {
+    return () => {
+      setShowSignupPrompt(false);
+      setShowCreditModal(false);
+    };
+  }, []);
+
   useEffect(() => {
     let active = true;
     async function loadTrialStatus() {
